@@ -8,8 +8,25 @@
  * when no database URL is configured.
  */
 
-import type { Client } from "@libsql/client";
 import type { ManifestEntry } from "../../src/protocol.ts";
+
+/**
+ * Minimal structural view of a libSQL client — just the `execute` surface we
+ * use. Both `@libsql/client` (Deno/Node) and `@libsql/client/web` (Worker)
+ * satisfy it, so the shared store doesn't depend on either package's types
+ * (which resolve differently across the two toolchains).
+ */
+interface LibsqlRow {
+  [column: string]: unknown;
+}
+interface LibsqlResult {
+  rows: LibsqlRow[];
+}
+export interface LibsqlClient {
+  execute(
+    stmt: string | { sql: string; args: unknown[] },
+  ): Promise<LibsqlResult>;
+}
 
 export interface ManifestStore {
   /** Append an entry for a room (idempotent on `(roomId, hash)`). */
@@ -63,7 +80,7 @@ CREATE TABLE IF NOT EXISTS manifest (
 export class TursoManifestStore implements ManifestStore {
   #ready: Promise<void>;
 
-  constructor(private readonly client: Client) {
+  constructor(private readonly client: LibsqlClient) {
     this.#ready = this.client.execute(SCHEMA).then(() => {});
   }
 
