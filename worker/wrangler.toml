@@ -1,0 +1,28 @@
+# Cloudflare Worker + Durable Object for photo-swarm (prod).
+# Run from this directory: `npm install` then `npx wrangler dev` / `deploy`.
+name = "photo-swarm"
+main = "index.ts"
+compatibility_date = "2025-01-15"
+compatibility_flags = ["nodejs_compat"]
+
+# Static assets (hand-authored + bundled `mod.js`). Build first from repo root:
+#   deno task bundle
+[assets]
+directory = "../public"
+binding = "ASSETS"
+html_handling = "none"
+
+[[durable_objects.bindings]]
+name = "ROOM"
+class_name = "RoomDurableObject"
+
+# SQLite-backed DO class — required for the WebSocket Hibernation API.
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RoomDurableObject"]
+
+# Secrets (set with `wrangler secret put <NAME>`), never committed:
+#   TURN_KEY_ID, TURN_KEY_API_TOKEN  — Cloudflare Realtime TURN
+#   TURSO_DATABASE_URL, TURSO_AUTH_TOKEN — libSQL manifest store
+[vars]
+# (public, non-secret vars only)

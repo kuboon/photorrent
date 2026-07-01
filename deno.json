@@ -1,0 +1,28 @@
+{
+  "tasks": {
+    "bundle": "deno run -A --unstable-bundle bundler/js.ts",
+    "dev": "deno task bundle && deno run -A --unstable-bundle --watch server.ts",
+    "start": "deno task bundle && deno run -A server.ts",
+    "test": "deno test -A",
+    "check": "deno task bundle && deno check server.ts client/mod.ts bundler/js.ts && deno lint && deno fmt --check"
+  },
+  "unstable": ["bundle"],
+  "compilerOptions": {
+    "strict": true,
+    "lib": ["deno.ns", "deno.unstable", "dom", "dom.iterable", "esnext"]
+  },
+  "imports": {
+    "@remix-run/fetch-router": "npm:@remix-run/fetch-router@0.18.2",
+    "@remix-run/static-middleware": "npm:@remix-run/static-middleware@0.4.8",
+    "@remix-run/response": "npm:@remix-run/response@0.3.3",
+    "@libsql/client": "npm:@libsql/client@^0.15.0",
+    "@std/assert": "jsr:@std/assert@^1.0.19"
+  },
+  "nodeModulesDir": "auto",
+  "fmt": {
+    "exclude": ["public/mod.js", "public/mod.js.map", "worker/"]
+  },
+  "lint": {
+    "exclude": ["public/mod.js", "public/mod.js.map", "worker/"]
+  }
+}
