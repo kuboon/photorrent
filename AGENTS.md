@@ -1,4 +1,4 @@
-# AGENTS.md — photo-swarm
+# AGENTS.md — photorrent
 
 Party photo-sharing over a WebRTC swarm. Read `README.md` for the full picture;
 this file is the short version for agents.

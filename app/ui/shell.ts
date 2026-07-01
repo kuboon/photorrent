@@ -8,7 +8,7 @@
  * Worker import `shellHtml` and wrap it in their own `Response`.
  */
 
-const APP_NAME = "photo-swarm";
+const APP_NAME = "photorrent";
 
 export function shellHtml(): string {
   return `<!doctype html>
@@ -25,7 +25,7 @@ export function shellHtml(): string {
 <body>
   <div id="app" data-app="${APP_NAME}">
     <header class="topbar">
-      <span class="brand">📸 photo-swarm</span>
+      <span class="brand">📸 photorrent</span>
       <span class="status" id="status">connecting…</span>
     </header>
     <main class="stage">

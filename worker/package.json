@@ -1,5 +1,5 @@
 {
-  "name": "photo-swarm-worker",
+  "name": "photorrent-worker",
   "private": true,
   "type": "module",
   "scripts": {

@@ -2,7 +2,7 @@
 import { main } from "./app.ts";
 
 main().catch((err) => {
-  console.error("[photo-swarm] failed to start", err);
+  console.error("[photorrent] failed to start", err);
   const s = document.getElementById("status");
   if (s) s.textContent = "failed to start";
 });

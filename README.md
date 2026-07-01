@@ -1,4 +1,4 @@
-# photo-swarm
+# photorrent
 
 A party photo-sharing app. Everyone in a party shares one secret key (out of
 band, via a link `#fragment` or QR). From that key each participant can:

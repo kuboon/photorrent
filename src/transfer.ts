@@ -26,7 +26,7 @@ const WANT_TIMEOUT_MS = 30_000;
 // local ciphertext store (IndexedDB) — survives reload / going home
 // ---------------------------------------------------------------------------
 
-const DB_NAME = "photo-swarm";
+const DB_NAME = "photorrent";
 const STORE_NAME = "ciphertext";
 
 /**

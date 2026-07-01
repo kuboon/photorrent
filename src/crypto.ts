@@ -1,5 +1,5 @@
 /**
- * Party crypto for photo-swarm.
+ * Party crypto for photorrent.
  *
  * A party is protected by a single symmetric key `K` (AES-GCM 256) shared
  * out-of-band via a link `#fragment` or QR. Everything that leaves the browser

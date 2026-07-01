@@ -1,6 +1,6 @@
-# Cloudflare Worker + Durable Object for photo-swarm (prod).
+# Cloudflare Worker + Durable Object for photorrent (prod).
 # Run from this directory: `npm install` then `npx wrangler dev` / `deploy`.
-name = "photo-swarm"
+name = "photorrent"
 main = "index.ts"
 compatibility_date = "2025-01-15"
 compatibility_flags = ["nodejs_compat"]

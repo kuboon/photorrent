@@ -27,7 +27,7 @@ Deno.serve({ port }, (req) => {
   return router.fetch(req);
 });
 
-console.log(`photo-swarm listening on http://localhost:${port}`);
+console.log(`photorrent listening on http://localhost:${port}`);
 
 function handleWebSocket(req: Request, url: URL): Response {
   const roomId = url.searchParams.get("room");

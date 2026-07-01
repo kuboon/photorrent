@@ -136,7 +136,7 @@ function renderApp(): void {
 
   const topbar = el("header", "topbar");
   topbar.append(
-    span("brand", "📸 photo-swarm"),
+    span("brand", "📸 photorrent"),
     (() => {
       const s = span("status", "connecting…");
       s.id = "status";
@@ -284,7 +284,7 @@ async function onShare(): Promise<void> {
   const link = await partyLink(location.href, state.key);
   try {
     if (navigator.share) {
-      await navigator.share({ title: "photo-swarm", url: link });
+      await navigator.share({ title: "photorrent", url: link });
     } else {
       await navigator.clipboard.writeText(link);
       setStatus("party link copied");
