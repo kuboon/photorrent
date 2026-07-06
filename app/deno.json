@@ -1,0 +1,10 @@
+{
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "jsxImportSource": "@remix-run/ui"
+  },
+  "imports": {
+    "tailwindcss": "npm:tailwindcss@4.2.4",
+    "daisyui": "npm:daisyui@^5.5.19"
+  }
+}

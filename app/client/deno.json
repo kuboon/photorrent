@@ -1,0 +1,10 @@
+{
+  "compilerOptions": {
+    "lib": ["dom", "dom.iterable", "dom.asynciterable", "deno.ns"],
+    "jsx": "react-jsx",
+    "jsxImportSource": "@remix-run/ui"
+  },
+  "imports": {
+    "@remix-run/ui": "npm:@remix-run/ui@^0.1.1"
+  }
+}
