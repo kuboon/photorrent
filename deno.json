@@ -1,0 +1,21 @@
+{
+  "workspace": [
+    "./app",
+    "./app/bundler",
+    "./app/server",
+    "./app/client"
+  ],
+  "tasks": {
+    "dev": "deno task --cwd app/server dev",
+    "serve": "deno task --cwd app/server serve",
+    "bundle": "deno task --cwd app/bundler build",
+    "test": "deno test -P",
+    "check": "deno check && deno lint && deno fmt --check"
+  },
+  "nodeModulesDir": "auto",
+  "unstable": ["bundle", "kv"],
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "jsxImportSource": "@remix-run/ui"
+  }
+}

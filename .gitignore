@@ -1,0 +1,4 @@
+/app/bundled/
+node_modules/
+*.local
+.DS_Store
