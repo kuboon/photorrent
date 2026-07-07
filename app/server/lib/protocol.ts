@@ -32,6 +32,9 @@ export interface FileMeta {
   createdAt: number;
 }
 
+/** Map of fileId → peerIds that currently hold the file body. */
+export type Holders = Record<string, string[]>;
+
 /** Messages the client sends to the server. */
 export type ClientMsg =
   /** Sent right after the socket opens; registers this peer in the room. */
@@ -40,17 +43,26 @@ export type ClientMsg =
   | { t: "add"; file: FileMeta }
   /** Uploader retracts a file it added. */
   | { t: "remove"; id: string }
-  /** WebRTC offer/answer/ice, relayed verbatim to `to` (Phase 2 body path). */
-  | { t: "signal"; to: string; data: unknown };
+  /** "I now hold this file body" (uploaded, or downloaded from a peer). */
+  | { t: "have"; id: string }
+  /** WebRTC offer/answer/ice, relayed verbatim to `to`. */
+  | { t: "signal"; to: string; data: unknown }
+  /** Byte-relay fallback: a transfer chunk/control forwarded to `to` when P2P
+   * can't connect. The server forwards it blind — it never stores bodies. */
+  | { t: "relay"; to: string; data: unknown };
 
 /** Messages the server sends to the client. */
 export type ServerMsg =
   /** Full current state, sent once on join. */
-  | { t: "snapshot"; files: FileMeta[]; peers: string[] }
+  | { t: "snapshot"; files: FileMeta[]; peers: string[]; holders: Holders }
   | { t: "added"; file: FileMeta }
   | { t: "removed"; id: string }
   /** Roster of currently-connected peers changed. */
   | { t: "presence"; peers: string[] }
-  /** A relayed peer signaling message (Phase 2 body path). */
+  /** The set of peers holding a file changed. */
+  | { t: "holders"; id: string; peers: string[] }
+  /** A relayed peer signaling message. */
   | { t: "signal"; from: string; data: unknown }
+  /** A relayed byte-transfer message (P2P fallback). */
+  | { t: "relay"; from: string; data: unknown }
   | { t: "error"; message: string };

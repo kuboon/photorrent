@@ -12,7 +12,7 @@
  * the hub with fake sockets — no real network required.
  */
 
-import type { ClientMsg, FileMeta, ServerMsg } from "./protocol.ts";
+import type { ClientMsg, FileMeta, Holders, ServerMsg } from "./protocol.ts";
 import { createRoomStore, type RoomStore, type Thumb } from "./index_store.ts";
 
 /** The subset of `WebSocket` the hub needs. */
@@ -27,6 +27,8 @@ const WS_OPEN = 1;
 interface Room {
   sockets: Map<string, Sink>;
   store: RoomStore;
+  /** fileId → peerIds currently holding the body. */
+  holders: Map<string, Set<string>>;
 }
 
 export class RoomHub {
@@ -35,7 +37,11 @@ export class RoomHub {
   private getRoom(roomId: string): Room {
     let room = this.rooms.get(roomId);
     if (!room) {
-      room = { sockets: new Map(), store: createRoomStore(roomId) };
+      room = {
+        sockets: new Map(),
+        store: createRoomStore(roomId),
+        holders: new Map(),
+      };
       this.rooms.set(roomId, room);
     }
     return room;
@@ -43,6 +49,14 @@ export class RoomHub {
 
   private peerIds(room: Room): string[] {
     return [...room.sockets.keys()];
+  }
+
+  private holdersMap(room: Room): Holders {
+    const out: Holders = {};
+    for (const [id, set] of room.holders) {
+      if (set.size) out[id] = [...set];
+    }
+    return out;
   }
 
   private send(socket: Sink, msg: ServerMsg): void {
@@ -79,7 +93,12 @@ export class RoomHub {
 
     const files = await room.store.listFiles();
     const peers = this.peerIds(room);
-    this.send(socket, { t: "snapshot", files, peers });
+    this.send(socket, {
+      t: "snapshot",
+      files,
+      peers,
+      holders: this.holdersMap(room),
+    });
     this.broadcast(roomId, { t: "presence", peers }, peerId);
     return { files, peers };
   }
@@ -93,22 +112,54 @@ export class RoomHub {
       this.rooms.delete(roomId);
       return;
     }
+    // Drop this peer from every holder set and announce the ones that changed,
+    // so requesters stop trying to fetch from a peer that has left.
+    for (const [id, set] of room.holders) {
+      if (set.delete(peerId)) {
+        this.broadcast(roomId, { t: "holders", id, peers: [...set] });
+      }
+    }
     this.broadcast(roomId, { t: "presence", peers: this.peerIds(room) });
   }
 
-  /** Add a file to the index and broadcast it to the room. */
+  /** Record that `peerId` holds file `id`, and announce the change. */
+  private addHolder(
+    room: Room,
+    roomId: string,
+    id: string,
+    peerId: string,
+  ): void {
+    let set = room.holders.get(id);
+    if (!set) {
+      set = new Set();
+      room.holders.set(id, set);
+    }
+    if (set.has(peerId)) return;
+    set.add(peerId);
+    this.broadcast(roomId, { t: "holders", id, peers: [...set] });
+  }
+
+  /** Add a file to the index and broadcast it. The uploader is a holder. */
   async addFile(roomId: string, file: FileMeta): Promise<void> {
     const room = this.getRoom(roomId);
     await room.store.addFile(file);
     this.broadcast(roomId, { t: "added", file });
+    this.addHolder(room, roomId, file.id, file.uploader);
   }
 
-  /** Remove a file from the index and broadcast the removal. */
+  /** Remove a file from the index (and its holder set) and broadcast. */
   async removeFile(roomId: string, id: string): Promise<void> {
     const room = this.rooms.get(roomId);
     if (!room) return;
     await room.store.removeFile(id);
+    room.holders.delete(id);
     this.broadcast(roomId, { t: "removed", id });
+  }
+
+  /** Record that `peerId` now holds file `id` (uploaded or downloaded). */
+  have(roomId: string, peerId: string, id: string): void {
+    const room = this.rooms.get(roomId);
+    if (room) this.addHolder(room, roomId, id, peerId);
   }
 
   /** Relay a signaling payload to a single addressed peer in the room. */
@@ -116,6 +167,13 @@ export class RoomHub {
     const room = this.rooms.get(roomId);
     const target = room?.sockets.get(to);
     if (target) this.send(target, { t: "signal", from, data });
+  }
+
+  /** Relay a byte-transfer payload (P2P fallback) to an addressed peer. */
+  relay(roomId: string, from: string, to: string, data: unknown): void {
+    const room = this.rooms.get(roomId);
+    const target = room?.sockets.get(to);
+    if (target) this.send(target, { t: "relay", from, data });
   }
 
   /** Dispatch a parsed client message from `peerId` in `roomId`. */
@@ -130,8 +188,14 @@ export class RoomHub {
       case "remove":
         await this.removeFile(roomId, msg.id);
         break;
+      case "have":
+        this.have(roomId, peerId, msg.id);
+        break;
       case "signal":
         this.relaySignal(roomId, peerId, msg.to, msg.data);
+        break;
+      case "relay":
+        this.relay(roomId, peerId, msg.to, msg.data);
         break;
     }
   }

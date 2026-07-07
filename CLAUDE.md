@@ -22,12 +22,17 @@ Deno + Remix v3 (`@remix-run/fetch-router`) 実装。sibling の
 
 ## 実装フェーズ
 
-- **Phase 1（現状）— 基盤**: 部屋ごとの index を WebSocket
+- **Phase 1 — 基盤（完了）**: 部屋ごとの index を WebSocket
   でリアルタイム同期する。 アップロード → content hash → サムネ生成 →
   自分の本体を OPFS 保存 → サムネを POST → WS で `add` 送信。他タブに index
   イベントが届きギャラリーがライブ更新される。
-- **Phase 2 以降**: WebRTC 本体転送 / サーババイト中継フォールバック /
-  受信本体の OPFS 保存 / 外部 FS への一括エクスポート。
+- **Phase 2 — 本体転送（完了）**: ファイル本体を WebRTC データチャネルで P2P
+  配布する。参加者は「欲しい（＝不要でない）が未取得」のファイルを holder
+  から自動ダウンロードし、OPFS に保存して `have` を通知（以後は自分も配信元に
+  なる）。P2P が繋がらない場合はサーバ WS の `relay` でチャンクを中継する
+  フォールバックに切り替わる。OPFS の本体は外部ファイルシステムへ一括
+  エクスポートできる（対象ディレクトリに既存の名前はスキップ）。 holder
+  追跡（誰がどのファイルを持つか）はサーバが行い `holders` で配信する。
 
 ## 構造
 
@@ -36,16 +41,21 @@ Deno + Remix v3 (`@remix-run/fetch-router`) 実装。sibling の
     ルート定義とコントローラ紐付け（`export default router`）
   - `controllers/` — `home` / `room` / `ws`（WebSocket upgrade）/
     `api/room_index` / `api/thumb`
-  - `lib/protocol.ts` — WS メッセージの型（server/client 共用、型のみ）
-  - `lib/room_hub.ts` —
-    部屋ごとの接続レジストリ＋ブロードキャスト＋シグナリング中継（シングルトン）
+  - `lib/protocol.ts` — WS メッセージの型（server/client 共用、型のみ）。 index
+    同期（add/remove）・presence・holder 追跡（have/holders）・
+    シグナリング（signal）・バイト中継（relay）
+  - `lib/room_hub.ts` — 部屋ごとの接続レジストリ＋ブロードキャスト＋holder
+    追跡＋ signal/relay 中継（シングルトン）
   - `lib/index_store.ts` — `@kuboon/kv` の `KvRepo` を使う index
     ＋サムネのストア
+  - `main.ts` — `deno serve` エントリ。WebSocket upgrade をルータより前で処理
   - `utils/render.tsx` / `ui/document.tsx` — SSR shell + `<Frame>` パターン
 - `app/client/` — ブラウザ TS/TSX（`Deno.bundle` で `app/bundled/` に出力）
   - `room_page.tsx` — 部屋ページの唯一の
-    `clientEntry`（ドロップゾーン＋ライブギャラリー）
-  - `lib/` — `ws_client` / `thumbnail` / `hash` / `opfs` / `unwanted`
+    `clientEntry`（ドロップゾーン＋ライブギャラリー＋自動DL＋エクスポート）
+  - `lib/` — `ws_client` / `thumbnail` / `hash` / `opfs` / `unwanted` /
+    `peer`（WebRTC＋relay チャネル）/ `transfer`（本体転送の管理）/
+    `export`（外部 FS への書き出し）
 - `app/bundler/` — `Deno.bundle`（JS）＋ Tailwind v4（CSS）ビルド
 - `app/assets/style.css` — Tailwind + daisyUI 入力
 

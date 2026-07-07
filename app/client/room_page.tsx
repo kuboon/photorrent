@@ -3,12 +3,19 @@
  *
  * Server renders an empty gallery + dropzone skeleton (roomId injected as a
  * prop); the client hydrates, opens the room WebSocket, and fills the gallery
- * live. Upload flow per file: content hash → thumbnail → save own body to OPFS
- * → POST the thumbnail → WS `add`. Incoming `snapshot`/`added`/`removed`/
- * `presence` events keep the gallery in sync across guests.
+ * live.
  *
- * Setup runs on both server and client; all browser-only work (WebSocket,
- * localStorage, OPFS) is gated on `isClientEnv`.
+ * Phase 1: upload → content hash → thumbnail → save own body to OPFS → POST
+ * thumbnail → WS `add`; live index sync across guests.
+ *
+ * Phase 2: file BODIES move peer-to-peer. Seeing a wanted file it lacks, a
+ * guest fetches it from a holder over a WebRTC data channel (falling back to
+ * the server byte-relay), saves it to OPFS, and announces `have` so it can
+ * serve it onward. "不要"-marked files are skipped. Held bodies can be
+ * bulk-exported to an external directory.
+ *
+ * Setup runs on both server and client; browser-only work is gated on
+ * `isClientEnv`.
  */
 
 import {
@@ -19,11 +26,14 @@ import {
 } from "@remix-run/ui";
 
 import type { FileMeta, ServerMsg } from "../server/lib/protocol.ts";
+import type { RtcSignalData } from "./lib/peer.ts";
 import { contentHash } from "./lib/hash.ts";
 import { generateThumbnail } from "./lib/thumbnail.ts";
-import { isAvailable as opfsAvailable, saveOwnFile } from "./lib/opfs.ts";
+import { isAvailable as opfsAvailable, listIds, save } from "./lib/opfs.ts";
 import { UnwantedSet } from "./lib/unwanted.ts";
 import { type ConnStatus, WsClient } from "./lib/ws_client.ts";
+import { type FileState, TransferManager } from "./lib/transfer.ts";
+import { exportAll, isExportSupported } from "./lib/export.ts";
 
 export interface RoomPageProps {
   roomId: string;
@@ -53,31 +63,92 @@ export const RoomPage = clientEntry(
     const roomId = handle.props.roomId;
 
     const files = new Map<string, FileMeta>();
+    const holders = new Map<string, Set<string>>();
+    const held = new Set<string>(); // file ids whose body is in my OPFS
+    const dlState = new Map<string, FileState>(); // downloading | error (transient)
     let peers: string[] = [];
     let status: ConnStatus = "connecting";
     let uploading = 0;
     let opfsOk = true;
+    let exportMsg: string | null = null;
 
     let peerId = "";
     let unwanted: UnwantedSet | null = null;
     let ws: WsClient | null = null;
+    let transfer: TransferManager | null = null;
+
+    // Pick an online holder (other than me) for a file, or null.
+    const pickHolder = (id: string): string | null => {
+      const set = holders.get(id);
+      if (!set) return null;
+      for (const h of set) {
+        if (h !== peerId && peers.includes(h)) return h;
+      }
+      return null;
+    };
+
+    // Fetch a wanted, not-yet-held file from a holder if one is available.
+    const maybeDownload = (id: string) => {
+      if (!transfer) return;
+      const file = files.get(id);
+      if (!file) return;
+      if (file.uploader === peerId || held.has(id)) return;
+      if (unwanted?.has(id)) return;
+      if (transfer.isDownloading(id)) return;
+      const holder = pickHolder(id);
+      if (holder) transfer.download(id, file.mime, holder);
+    };
+
+    const retryDownloads = () => {
+      for (const id of files.keys()) maybeDownload(id);
+    };
+
+    // Mark which known files we already have bodies for (from a prior session).
+    const syncHeldFromOpfs = async () => {
+      for (const id of await listIds()) {
+        if (files.has(id)) held.add(id);
+      }
+      handle.update();
+      retryDownloads();
+    };
 
     const onServerMsg = (msg: ServerMsg) => {
       switch (msg.t) {
         case "snapshot":
           files.clear();
           for (const f of msg.files) files.set(f.id, f);
+          holders.clear();
+          for (const [id, ps] of Object.entries(msg.holders)) {
+            holders.set(id, new Set(ps));
+          }
           peers = msg.peers;
+          void syncHeldFromOpfs();
           break;
         case "added":
           files.set(msg.file.id, msg.file);
+          maybeDownload(msg.file.id);
           break;
         case "removed":
           files.delete(msg.id);
+          holders.delete(msg.id);
           break;
         case "presence":
           peers = msg.peers;
+          retryDownloads();
           break;
+        case "holders":
+          holders.set(msg.id, new Set(msg.peers));
+          maybeDownload(msg.id);
+          break;
+        case "signal":
+          transfer?.onSignal(msg.from, msg.data as RtcSignalData);
+          return; // no re-render
+        case "relay":
+          transfer?.onRelay(
+            msg.from,
+            msg.data as { tid?: string; j?: unknown; b?: string },
+          );
+          return; // no re-render
         case "error":
           console.warn("[room] server error:", msg.message);
           return;
@@ -102,6 +173,23 @@ export const RoomPage = clientEntry(
           status = s;
           handle.update();
         });
+        transfer = new TransferManager(
+          {
+            myPeerId: peerId,
+            signal: (to, data) => ws?.send({ t: "signal", to, data }),
+            relay: (to, data) => ws?.send({ t: "relay", to, data }),
+            announceHave: (id) => ws?.send({ t: "have", id }),
+          },
+          (fileId, state) => {
+            if (state === "have") {
+              held.add(fileId);
+              dlState.delete(fileId);
+            } else {
+              dlState.set(fileId, state);
+            }
+            handle.update();
+          },
+        );
       });
     }
 
@@ -112,7 +200,8 @@ export const RoomPage = clientEntry(
       handle.update();
       try {
         const thumb = await generateThumbnail(file);
-        await saveOwnFile(id, file); // keep our own body locally (Phase 1)
+        await save(id, file); // keep our own body locally to serve to peers
+        held.add(id);
 
         const thumbUrl = `/api/room/${roomId}/thumb?id=${id}`;
         const res = await fetch(thumbUrl, {
@@ -149,14 +238,51 @@ export const RoomPage = clientEntry(
     };
 
     const onToggleUnwanted = (id: string) => {
-      unwanted?.toggle(id);
+      const nowUnwanted = unwanted?.toggle(id) ?? false;
+      if (!nowUnwanted) maybeDownload(id); // un-marked: fetch it after all
       handle.update();
+    };
+
+    const onExport = async () => {
+      const items = [...files.values()]
+        .filter((f) => held.has(f.id))
+        .map((f) => ({ id: f.id, filename: f.filename }));
+      if (items.length === 0) return;
+      try {
+        exportMsg = "エクスポート中…";
+        handle.update();
+        const r = await exportAll(items);
+        exportMsg = `${r.written}件を書き出し・${r.skipped}件スキップ` +
+          (r.failed ? `・${r.failed}件失敗` : "");
+      } catch (err) {
+        exportMsg = (err as Error)?.name === "AbortError"
+          ? null
+          : "エクスポートに失敗しました";
+      }
+      handle.update();
+    };
+
+    // Per-file UI state (badge + dim). Returns null when there's no badge.
+    const fileBadge = (
+      f: FileMeta,
+    ): { label: string; cls: string; spin?: boolean } | null => {
+      if (f.uploader === peerId) return { label: "自分", cls: "badge-ghost" };
+      if (held.has(f.id)) return { label: "同期済み", cls: "badge-success" };
+      const s = dlState.get(f.id);
+      if (s === "downloading") {
+        return { label: "受信中", cls: "badge-info", spin: true };
+      }
+      if (s === "error") return { label: "失敗", cls: "badge-error" };
+      if (unwanted?.has(f.id)) return null;
+      return { label: "未取得", cls: "badge-ghost badge-outline" };
     };
 
     return () => {
       const list = [...files.values()].sort((a, b) =>
         a.createdAt - b.createdAt
       );
+      const heldCount = list.filter((f) => held.has(f.id)).length;
+      const canExport = isExportSupported() && heldCount > 0;
       const statusLabel = status === "open"
         ? `接続中 · 参加者 ${peers.length}人`
         : status === "connecting"
@@ -184,8 +310,23 @@ export const RoomPage = clientEntry(
                   OPFS 非対応
                 </span>
               )}
+              {canExport && (
+                <button
+                  type="button"
+                  class="btn btn-sm btn-outline"
+                  mix={[on("click", () => void onExport())]}
+                >
+                  ⬇️ 端末に保存 ({heldCount})
+                </button>
+              )}
             </div>
           </div>
+
+          {exportMsg && (
+            <div role="alert" class="alert alert-info alert-soft py-2">
+              <span class="text-sm">{exportMsg}</span>
+            </div>
+          )}
 
           <label
             for={FILE_INPUT_ID}
@@ -239,8 +380,8 @@ export const RoomPage = clientEntry(
             : (
               <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
                 {list.map((f) => {
-                  const mine = f.uploader === peerId;
                   const isUnwanted = unwanted?.has(f.id) ?? false;
+                  const badge = fileBadge(f);
                   return (
                     <div
                       class={`card card-compact bg-base-100 border border-base-300 overflow-hidden ${
@@ -264,8 +405,14 @@ export const RoomPage = clientEntry(
                         </div>
                         <div class="flex items-center justify-between text-xs text-base-content/60">
                           <span>{humanSize(f.size)}</span>
-                          {mine && (
-                            <span class="badge badge-ghost badge-xs">自分</span>
+                          {badge && (
+                            <span class={`badge ${badge.cls} badge-xs gap-1`}>
+                              {badge.spin && (
+                                <span class="loading loading-spinner loading-xs">
+                                </span>
+                              )}
+                              {badge.label}
+                            </span>
                           )}
                         </div>
                         <button

@@ -151,3 +151,67 @@ Deno.test("remove broadcasts 'removed'", async () => {
   assertEquals(a.ofType("removed")[0].id, "aa");
   assertEquals((await hub.listFiles("r1")).length, 0);
 });
+
+Deno.test("addFile registers the uploader as a holder", async () => {
+  const hub = new RoomHub();
+  const a = new FakeSocket();
+  await hub.join("r1", "p1", a);
+  await hub.addFile("r1", file("aa", "uploaderX"));
+
+  const holders = a.ofType("holders");
+  assertEquals(holders.at(-1)?.id, "aa");
+  assertEquals(holders.at(-1)?.peers, ["uploaderX"]);
+});
+
+Deno.test("have adds a holder and broadcasts it", async () => {
+  const hub = new RoomHub();
+  const a = new FakeSocket();
+  const b = new FakeSocket();
+  await hub.join("r1", "p1", a);
+  await hub.join("r1", "p2", b);
+  await hub.addFile("r1", file("aa", "p1"));
+
+  hub.have("r1", "p2", "aa");
+  const last = b.ofType("holders").at(-1);
+  assertEquals(last?.id, "aa");
+  assertEquals(last?.peers.sort(), ["p1", "p2"]);
+});
+
+Deno.test("snapshot includes the current holders map", async () => {
+  const hub = new RoomHub();
+  const a = new FakeSocket();
+  await hub.join("r1", "p1", a);
+  await hub.addFile("r1", file("aa", "p1"));
+
+  const b = new FakeSocket();
+  await hub.join("r1", "p2", b);
+  assertEquals(b.ofType("snapshot")[0].holders, { aa: ["p1"] });
+});
+
+Deno.test("leaving drops the peer from holder sets", async () => {
+  const hub = new RoomHub();
+  const a = new FakeSocket();
+  const b = new FakeSocket();
+  await hub.join("r1", "p1", a);
+  await hub.join("r1", "p2", b);
+  await hub.addFile("r1", file("aa", "p2")); // p2 is the sole holder
+
+  hub.leave("r1", "p2");
+  assertEquals(a.ofType("holders").at(-1)?.peers, []); // p2 removed
+});
+
+Deno.test("relay reaches only the addressed peer", async () => {
+  const hub = new RoomHub();
+  const a = new FakeSocket();
+  const b = new FakeSocket();
+  const c = new FakeSocket();
+  await hub.join("r1", "p1", a);
+  await hub.join("r1", "p2", b);
+  await hub.join("r1", "p3", c);
+
+  hub.relay("r1", "p1", "p2", { chunk: 1 });
+  assertEquals(b.ofType("relay").length, 1);
+  assertEquals(b.ofType("relay")[0].from, "p1");
+  assertEquals(a.ofType("relay").length, 0);
+  assertEquals(c.ofType("relay").length, 0);
+});
