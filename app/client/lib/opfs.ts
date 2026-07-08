@@ -1,13 +1,11 @@
 /**
- * OPFS (Origin Private File System) storage for file bodies.
- *
- * Phase 1 only saves the uploader's OWN files here (proving the local store
- * works); Phase 2 will also write peer files fetched over WebRTC and add the
- * bulk export to an external directory.
+ * OPFS (Origin Private File System) storage for file bodies, keyed by content
+ * id (SHA-256). Holds both the user's own uploads and files downloaded from
+ * peers, so anything in here can be served to other peers and bulk-exported.
  *
  * All entrypoints feature-detect and degrade gracefully: if OPFS is
- * unavailable (older browser, some private modes), saving is skipped with a
- * warning rather than throwing — index sync does not depend on it.
+ * unavailable (older browser, some private modes), operations are skipped with
+ * a warning rather than throwing — index sync does not depend on it.
  */
 
 const DIR = "files";
@@ -23,10 +21,10 @@ async function filesDir(): Promise<FileSystemDirectoryHandle> {
   return await root.getDirectoryHandle(DIR, { create: true });
 }
 
-/** Store a file body under its content id. No-op if OPFS is unavailable. */
-export async function saveOwnFile(id: string, blob: Blob): Promise<boolean> {
+/** Store a file body under its content id. Returns false if OPFS is off. */
+export async function save(id: string, blob: Blob): Promise<boolean> {
   if (!isAvailable()) {
-    console.warn("[opfs] unavailable — skipping local save of", id);
+    console.warn("[opfs] unavailable — skipping save of", id);
     return false;
   }
   try {
@@ -42,6 +40,18 @@ export async function saveOwnFile(id: string, blob: Blob): Promise<boolean> {
   }
 }
 
+/** Read a stored file body by id, or null if absent/unavailable. */
+export async function getFile(id: string): Promise<File | null> {
+  if (!isAvailable()) return null;
+  try {
+    const dir = await filesDir();
+    const handle = await dir.getFileHandle(id, { create: false });
+    return await handle.getFile();
+  } catch {
+    return null;
+  }
+}
+
 /** Whether a file body with this id is already in OPFS. */
 export async function has(id: string): Promise<boolean> {
   if (!isAvailable()) return false;
@@ -52,4 +62,18 @@ export async function has(id: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/** All content ids currently stored in OPFS. */
+export async function listIds(): Promise<string[]> {
+  if (!isAvailable()) return [];
+  const ids: string[] = [];
+  try {
+    const dir = await filesDir();
+    // @ts-ignore - keys() exists on FileSystemDirectoryHandle at runtime
+    for await (const name of dir.keys()) ids.push(name as string);
+  } catch (err) {
+    console.warn("[opfs] listIds failed", err);
+  }
+  return ids;
 }

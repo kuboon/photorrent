@@ -1,19 +1,21 @@
 /**
- * Per-room storage for the file index and thumbnail bytes.
+ * Per-room storage for the file index and thumbnails, Turso-backed.
  *
- * Backed by `@kuboon/kv`'s {@link KvRepo}. Phase 1 uses the in-memory backend
- * ({@link MemoryKvRepo}); swapping to Deno KV for multi-process persistence is
- * a one-line change here (construct {@link DenoKvRepo} instead) — the rest of
- * the app only sees the {@link RoomStore} interface.
+ * Three backends, composed behind the {@link RoomStore} interface so the hub is
+ * agnostic to them:
+ *   - **index** (FileMeta rows) → `@remix-run/data-table` `files` table.
+ *   - **thumbnail bytes** → {@link ObjectStore} (local dir in dev, R2 in prod).
+ *   - **thumbnail content-type** → `@kuboon/kv/turso.ts` (`TursoKvRepo`).
  *
- * IMPORTANT: each room gets its **own** repo instance. `MemoryKvRepo`'s async
- * iterator walks that instance's whole backing map, so sharing one instance
- * across rooms would leak files between rooms during snapshots.
+ * Rooms share one database; isolation is by the `room` column / key prefix.
  */
 
-import type { KvRepo } from "@kuboon/kv";
-import { MemoryKvRepo } from "@kuboon/kv/memory.ts";
+import { TursoKvRepo } from "@kuboon/kv/turso.ts";
+import { sql } from "@remix-run/data-table";
+import type { Client } from "@libsql/client";
 import type { FileMeta } from "./protocol.ts";
+import { defaultDeps, type Deps, files } from "./db.ts";
+import { defaultObjectStore, type ObjectStore } from "./object_store.ts";
 
 /** Stored thumbnail: raw bytes plus their content-type. */
 export interface Thumb {
@@ -21,55 +23,105 @@ export interface Thumb {
   ct: string;
 }
 
-/** Abandoned rooms self-evict after this long with no writes. */
-const ROOM_TTL_MS = 12 * 60 * 60 * 1000;
-
 /** Storage for a single room's index + thumbnails. */
 export interface RoomStore {
-  /** Insert or replace a file's metadata. */
   addFile(file: FileMeta): Promise<void>;
-  /** Delete a file's metadata (thumbnail is left to expire). */
   removeFile(id: string): Promise<void>;
-  /** All files currently in the room, newest first. */
   listFiles(): Promise<FileMeta[]>;
-  /** Store a thumbnail's bytes. */
   putThumb(id: string, thumb: Thumb): Promise<void>;
-  /** Fetch a thumbnail's bytes, or null if unknown/expired. */
   getThumb(id: string): Promise<Thumb | null>;
 }
 
-/** Create an in-memory {@link RoomStore} for one room. */
-export function createRoomStore(roomId: string): RoomStore {
-  const index: KvRepo<FileMeta> = new MemoryKvRepo<FileMeta>(
-    ["room", roomId, "file"],
-    { expireIn: ROOM_TTL_MS },
+/** Overridable backends (tests pass an in-memory client + temp object store). */
+export interface RoomStoreDeps {
+  deps?: Deps;
+  kvClient?: Client;
+  objectStore?: ObjectStore;
+}
+
+type FileRow = {
+  file_id: string;
+  filename: string;
+  size: number;
+  mime: string;
+  width: number;
+  height: number;
+  uploader: string;
+  created_at: number;
+};
+
+export function createRoomStore(
+  roomId: string,
+  overrides: RoomStoreDeps = {},
+): RoomStore {
+  const deps = overrides.deps ?? defaultDeps();
+  const objectStore = overrides.objectStore ?? defaultObjectStore();
+  const kvClient = overrides.kvClient ?? deps.client;
+  const thumbCt = new TursoKvRepo<{ ct: string }>(
+    kvClient,
+    ["room", roomId, "thumbct"],
   );
-  const thumbs: KvRepo<Thumb> = new MemoryKvRepo<Thumb>(
-    ["room", roomId, "thumb"],
-    { expireIn: ROOM_TTL_MS },
-  );
+
+  const rowKey = (fileId: string) => `${roomId}/${fileId}`;
+
+  const toMeta = (row: FileRow): FileMeta => ({
+    id: row.file_id,
+    filename: row.filename,
+    size: Number(row.size),
+    mime: row.mime,
+    width: Number(row.width),
+    height: Number(row.height),
+    thumbUrl: `/api/room/${roomId}/thumb?id=${row.file_id}`,
+    uploader: row.uploader,
+    createdAt: Number(row.created_at),
+  });
 
   return {
     async addFile(file) {
-      await index.entry(file.id).update(() => file);
+      await deps.ensureSchema();
+      // Idempotent upsert — re-adding the same content id refreshes metadata.
+      await deps.db.exec(sql`
+        INSERT INTO files
+          (id, room, file_id, filename, size, mime, width, height, uploader, created_at)
+        VALUES
+          (${rowKey(file.id)}, ${roomId}, ${file.id}, ${file.filename},
+           ${file.size}, ${file.mime}, ${file.width}, ${file.height},
+           ${file.uploader}, ${file.createdAt})
+        ON CONFLICT(id) DO UPDATE SET
+          filename = excluded.filename, size = excluded.size,
+          mime = excluded.mime, width = excluded.width,
+          height = excluded.height, uploader = excluded.uploader,
+          created_at = excluded.created_at`);
     },
+
     async removeFile(id) {
-      await index.entry(id).update(() => null);
+      await deps.ensureSchema();
+      await deps.db.exec(sql`DELETE FROM files WHERE id = ${rowKey(id)}`);
+      await thumbCt.entry(id).update(() => null);
     },
+
     async listFiles() {
-      const files: FileMeta[] = [];
-      for await (const entry of index) {
-        const file = await entry.get();
-        if (file) files.push(file);
-      }
-      files.sort((a, b) => a.createdAt - b.createdAt);
-      return files;
+      await deps.ensureSchema();
+      const rows = await deps.db.findMany(files, {
+        where: { room: roomId },
+        orderBy: ["created_at", "asc"],
+      }) as unknown as FileRow[];
+      return rows.map(toMeta);
     },
+
     async putThumb(id, thumb) {
-      await thumbs.entry(id).update(() => thumb);
+      await objectStore.put(rowKey(id), thumb.bytes);
+      await thumbCt.entry(id).update(() => ({ ct: thumb.ct }));
     },
+
     async getThumb(id) {
-      return await thumbs.entry(id).get();
+      const bytes = await objectStore.get(rowKey(id));
+      if (!bytes) return null;
+      const meta = await thumbCt.entry(id).get();
+      return {
+        bytes: bytes as Uint8Array<ArrayBuffer>,
+        ct: meta?.ct ?? "image/jpeg",
+      };
     },
   };
 }

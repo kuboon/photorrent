@@ -9,7 +9,9 @@
 - 「不要」マークしたものは自分の端末にはダウンロードされない。
 - OPFS に保存し、後でまとめて外部ファイルシステムへエクスポート（Phase 2）。
 
-Deno + Remix v3 (`@remix-run/fetch-router`) 実装。
+Deno + Remix v3 (`@remix-run/fetch-router`) 実装。永続化は Cloudflare Workers
+デプロイを見据えて **Turso (libSQL)** を使う（index=`@remix-run/data-table`、
+サムネ本体=R2/ローカル、サムネ ct=`@kuboon/kv/turso.ts`）。
 
 ## 開発
 
@@ -25,8 +27,10 @@ deno task check    # 型チェック + lint + fmt
 
 ## 実装状況
 
-- **Phase 1（現状）**: 部屋ごとの index を WebSocket
+- **Phase 1（完了）**: 部屋ごとの index を WebSocket
   でリアルタイム同期。アップロード・サムネ生成・
   ライブギャラリー・「不要」ローカルトグル・自分の本体の OPFS 保存まで。
-- **Phase 2 以降**: WebRTC 本体転送、サーババイト中継フォールバック、受信本体の
-  OPFS 保存、 外部 FS への一括エクスポート。
+- **Phase 2（完了）**: 本体を WebRTC データチャネルで P2P 転送。欲しいファイルを
+  holder から自動ダウンロードして OPFS に保存し、以後は自分も配信元になる。 P2P
+  が繋がらない時はサーバ WS のバイト中継にフォールバック。OPFS の本体は
+  外部ファイルシステムへ一括エクスポート（既存分はスキップ）。
