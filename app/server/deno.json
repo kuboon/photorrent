@@ -12,9 +12,10 @@
   },
   "imports": {
     "@std/assert": "jsr:@std/assert@^1.0.19",
-    "@kuboon/kv": "jsr:@kuboon/kv@0.1.1",
-    "@kuboon/kv/memory.ts": "jsr:@kuboon/kv@0.1.1/memory.ts",
-    "@kuboon/kv/denoKv.ts": "jsr:@kuboon/kv@0.1.1/denoKv.ts",
+    "@libsql/client": "npm:@libsql/client@^0.17.4",
+    "@remix-run/data-table": "npm:@remix-run/data-table@^0.3.0",
+    "@kuboon/remix-data-table-sqlite-turso": "jsr:@kuboon/remix-data-table-sqlite-turso@0.0.0",
+    "@kuboon/kv/turso.ts": "jsr:@kuboon/kv@0.2.0/turso.ts",
     "@remix-run/ui": "npm:@remix-run/ui@^0.1.1",
     "@remix-run/fetch-router": "npm:@remix-run/fetch-router@0.18.2",
     "@remix-run/response": "npm:@remix-run/response@0.3.3",
@@ -22,9 +23,12 @@
   },
   "permissions": {
     "default": {
-      "env": ["PORT"],
-      "net": ["0.0.0.0", "localhost", "127.0.0.1"],
-      "read": ["../bundled"]
+      "env": true,
+      "net": true,
+      "read": true,
+      "write": true,
+      "sys": true,
+      "ffi": true
     }
   }
 }

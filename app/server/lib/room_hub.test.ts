@@ -1,6 +1,31 @@
 import { assertEquals } from "@std/assert";
+import { createClient } from "@libsql/client";
 import { RoomHub, type Sink } from "./room_hub.ts";
+import { createRoomStore } from "./index_store.ts";
+import { makeDeps } from "./db.ts";
+import type { ObjectStore } from "./object_store.ts";
 import type { FileMeta, ServerMsg } from "./protocol.ts";
+
+/** In-memory thumbnail store so hub tests never touch the filesystem. */
+class MemObjectStore implements ObjectStore {
+  private map = new Map<string, Uint8Array>();
+  put(key: string, bytes: Uint8Array): Promise<void> {
+    this.map.set(key, bytes);
+    return Promise.resolve();
+  }
+  get(key: string): Promise<Uint8Array | null> {
+    return Promise.resolve(this.map.get(key) ?? null);
+  }
+}
+
+/** A hub backed by a fresh in-memory libSQL db, isolated per test. */
+function newHub(): RoomHub {
+  const deps = makeDeps(createClient({ url: ":memory:" }));
+  const objectStore = new MemObjectStore();
+  return new RoomHub((roomId) =>
+    createRoomStore(roomId, { deps, objectStore })
+  );
+}
 
 /** Fake WebSocket that records the messages sent to it. */
 class FakeSocket implements Sink {
@@ -35,7 +60,7 @@ function file(id: string, uploader = "p1"): FileMeta {
 }
 
 Deno.test("join returns a snapshot and registers the peer", async () => {
-  const hub = new RoomHub();
+  const hub = newHub();
   const a = new FakeSocket();
   const snap = await hub.join("r1", "p1", a);
 
@@ -47,7 +72,7 @@ Deno.test("join returns a snapshot and registers the peer", async () => {
 });
 
 Deno.test("add broadcasts 'added' to every socket in the room", async () => {
-  const hub = new RoomHub();
+  const hub = newHub();
   const a = new FakeSocket();
   const b = new FakeSocket();
   await hub.join("r1", "p1", a);
@@ -61,7 +86,7 @@ Deno.test("add broadcasts 'added' to every socket in the room", async () => {
 });
 
 Deno.test("rooms are isolated: files do not leak across rooms", async () => {
-  const hub = new RoomHub();
+  const hub = newHub();
   const a = new FakeSocket();
   await hub.join("r1", "p1", a);
   await hub.addFile("r1", file("aa"));
@@ -73,7 +98,7 @@ Deno.test("rooms are isolated: files do not leak across rooms", async () => {
 });
 
 Deno.test("snapshot on join reflects prior adds (no race)", async () => {
-  const hub = new RoomHub();
+  const hub = newHub();
   const a = new FakeSocket();
   await hub.join("r1", "p1", a);
   await hub.addFile("r1", file("aa"));
@@ -86,7 +111,7 @@ Deno.test("snapshot on join reflects prior adds (no race)", async () => {
 });
 
 Deno.test("relaySignal reaches only the addressed peer", async () => {
-  const hub = new RoomHub();
+  const hub = newHub();
   const a = new FakeSocket();
   const b = new FakeSocket();
   const c = new FakeSocket();
@@ -103,7 +128,7 @@ Deno.test("relaySignal reaches only the addressed peer", async () => {
 });
 
 Deno.test("presence fires for others on join and leave", async () => {
-  const hub = new RoomHub();
+  const hub = newHub();
   const a = new FakeSocket();
   await hub.join("r1", "p1", a);
 
@@ -118,7 +143,7 @@ Deno.test("presence fires for others on join and leave", async () => {
 });
 
 Deno.test("last peer leaving drops the room", async () => {
-  const hub = new RoomHub();
+  const hub = newHub();
   const a = new FakeSocket();
   await hub.join("r1", "p1", a);
   assertEquals(hub.peerCount("r1"), 1);
@@ -128,7 +153,7 @@ Deno.test("last peer leaving drops the room", async () => {
 });
 
 Deno.test("closed sockets are skipped on broadcast", async () => {
-  const hub = new RoomHub();
+  const hub = newHub();
   const a = new FakeSocket();
   const b = new FakeSocket();
   await hub.join("r1", "p1", a);
@@ -141,7 +166,7 @@ Deno.test("closed sockets are skipped on broadcast", async () => {
 });
 
 Deno.test("remove broadcasts 'removed'", async () => {
-  const hub = new RoomHub();
+  const hub = newHub();
   const a = new FakeSocket();
   await hub.join("r1", "p1", a);
   await hub.addFile("r1", file("aa"));
@@ -153,7 +178,7 @@ Deno.test("remove broadcasts 'removed'", async () => {
 });
 
 Deno.test("addFile registers the uploader as a holder", async () => {
-  const hub = new RoomHub();
+  const hub = newHub();
   const a = new FakeSocket();
   await hub.join("r1", "p1", a);
   await hub.addFile("r1", file("aa", "uploaderX"));
@@ -164,7 +189,7 @@ Deno.test("addFile registers the uploader as a holder", async () => {
 });
 
 Deno.test("have adds a holder and broadcasts it", async () => {
-  const hub = new RoomHub();
+  const hub = newHub();
   const a = new FakeSocket();
   const b = new FakeSocket();
   await hub.join("r1", "p1", a);
@@ -178,7 +203,7 @@ Deno.test("have adds a holder and broadcasts it", async () => {
 });
 
 Deno.test("snapshot includes the current holders map", async () => {
-  const hub = new RoomHub();
+  const hub = newHub();
   const a = new FakeSocket();
   await hub.join("r1", "p1", a);
   await hub.addFile("r1", file("aa", "p1"));
@@ -189,7 +214,7 @@ Deno.test("snapshot includes the current holders map", async () => {
 });
 
 Deno.test("leaving drops the peer from holder sets", async () => {
-  const hub = new RoomHub();
+  const hub = newHub();
   const a = new FakeSocket();
   const b = new FakeSocket();
   await hub.join("r1", "p1", a);
@@ -201,7 +226,7 @@ Deno.test("leaving drops the peer from holder sets", async () => {
 });
 
 Deno.test("relay reaches only the addressed peer", async () => {
-  const hub = new RoomHub();
+  const hub = newHub();
   const a = new FakeSocket();
   const b = new FakeSocket();
   const c = new FakeSocket();

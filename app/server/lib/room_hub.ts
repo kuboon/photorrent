@@ -34,12 +34,18 @@ interface Room {
 export class RoomHub {
   private rooms = new Map<string, Room>();
 
+  /**
+   * @param makeStore factory for a room's {@link RoomStore}. Defaults to the
+   * Turso-backed store; tests inject one over an in-memory client.
+   */
+  constructor(private makeStore = createRoomStore) {}
+
   private getRoom(roomId: string): Room {
     let room = this.rooms.get(roomId);
     if (!room) {
       room = {
         sockets: new Map(),
-        store: createRoomStore(roomId),
+        store: this.makeStore(roomId),
         holders: new Map(),
       };
       this.rooms.set(roomId, room);

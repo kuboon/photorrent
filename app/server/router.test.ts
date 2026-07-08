@@ -3,6 +3,11 @@ import router from "./router.ts";
 import { hub } from "./lib/room_hub.ts";
 import type { FileMeta } from "./lib/protocol.ts";
 
+// These run before any test executes; the DB/object-store are lazy, so the
+// singleton hub picks up an in-memory libSQL db + a temp thumb dir here.
+Deno.env.set("TURSO_LOCAL_URL", ":memory:");
+Deno.env.set("THUMB_DIR", "./.data/test-thumbs");
+
 const FRAME = { "rmx-frame": "1" };
 
 function req(path: string, init?: RequestInit): Request {

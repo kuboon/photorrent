@@ -9,7 +9,9 @@
 - 「不要」マークしたものは自分の端末にはダウンロードされない。
 - OPFS に保存し、後でまとめて外部ファイルシステムへエクスポート（Phase 2）。
 
-Deno + Remix v3 (`@remix-run/fetch-router`) 実装。
+Deno + Remix v3 (`@remix-run/fetch-router`) 実装。永続化は Cloudflare Workers
+デプロイを見据えて **Turso (libSQL)** を使う（index=`@remix-run/data-table`、
+サムネ本体=R2/ローカル、サムネ ct=`@kuboon/kv/turso.ts`）。
 
 ## 開発
 

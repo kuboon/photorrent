@@ -17,5 +17,16 @@
   "compilerOptions": {
     "jsx": "react-jsx",
     "jsxImportSource": "@remix-run/ui"
-  }
+  },
+  "permissions": {
+    "default": {
+      "env": true,
+      "sys": true,
+      "ffi": true,
+      "read": true,
+      "write": true,
+      "net": true
+    }
+  },
+  "test": { "permissions": "default" }
 }

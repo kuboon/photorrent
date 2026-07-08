@@ -46,8 +46,11 @@ Deno + Remix v3 (`@remix-run/fetch-router`) 実装。sibling の
     シグナリング（signal）・バイト中継（relay）
   - `lib/room_hub.ts` — 部屋ごとの接続レジストリ＋ブロードキャスト＋holder
     追跡＋ signal/relay 中継（シングルトン）
-  - `lib/index_store.ts` — `@kuboon/kv` の `KvRepo` を使う index
-    ＋サムネのストア
+  - `lib/db.ts` — libSQL (Turso) クライアント＋ `@remix-run/data-table` の DB
+    （env 駆動・遅延初期化）。`files` テーブル定義とスキーマ作成
+  - `lib/object_store.ts` — サムネ本体の保存抽象（dev=ローカルFS / prod=R2）
+  - `lib/index_store.ts` — 部屋ごとのストア。index=`@remix-run/data-table`、
+    サムネ ct=`@kuboon/kv/turso.ts`、サムネ本体=`object_store`（R2/local）
   - `main.ts` — `deno serve` エントリ。WebSocket upgrade をルータより前で処理
   - `utils/render.tsx` / `ui/document.tsx` — SSR shell + `<Frame>` パターン
 - `app/client/` — ブラウザ TS/TSX（`Deno.bundle` で `app/bundled/` に出力）
@@ -66,6 +69,26 @@ Deno + Remix v3 (`@remix-run/fetch-router`) 実装。sibling の
 も同様にパスで受ける （`/ws/:roomId`, `/api/room/:roomId/index`,
 `/api/room/:roomId/thumb`）。
 
+## 永続化（Turso / libSQL）
+
+デプロイ先は Cloudflare Workers 想定のため Deno KV は使わない。永続化は **Turso
+(libSQL)** に統一する。
+
+- **index** は `@remix-run/data-table`（Turso アダプタ
+  `@kuboon/remix-data-table-sqlite-turso`） の `files` テーブル。
+- **サムネ本体**は R2（prod）/
+  ローカルディレクトリ（dev）に置く（`object_store.ts`）。
+- **サムネの content-type** は `@kuboon/kv/turso.ts` の `TursoKvRepo` に置く。
+- リアルタイム（WS ハブ・holder）は現状プロセス内。CF Workers 化＝WebSocket を
+  Durable Object へ、libSQL を `@libsql/client/web` へ、R2 バインディングを
+  `object_store.setThumbBucket()` へ、は後続作業（別 PR）。
+
+### 環境変数
+
+- `TURSO_DATABASE_URL` / `TURSO_AUTH_TOKEN` — Turso 本番 DB。未設定なら
+  `TURSO_LOCAL_URL`（既定 `file:./.data/photorrent.db`、テストは `:memory:`）。
+- `THUMB_DIR` — dev のサムネ保存先（既定 `./.data/thumbs`）。prod は R2。
+
 ## 開発
 
 ```bash
@@ -73,6 +96,9 @@ deno task dev      # 開発サーバー起動（bundle してから deno serve -
 deno task test     # テスト実行
 deno task check    # 型チェック + lint + fmt
 ```
+
+> ライブラリの一部は公開直後のため、この環境では `--minimum-dependency-age=0`
+> が必要な場合がある（`deno.lock` をコミット済みなので通常の CI では不要）。
 
 `http://localhost:8000/` を開き「アルバムを作成」で `/room/<roomId>` へ。同じ
 URL を複数タブ/端末で 開くと、片方のアップロードがもう片方に自動で現れる。
