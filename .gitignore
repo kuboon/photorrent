@@ -1,5 +1,7 @@
 /app/bundled/
 .data/
+.wrangler/
+/app/worker/dist/
 node_modules/
 *.local
 .DS_Store

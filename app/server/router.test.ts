@@ -1,6 +1,6 @@
 import { assertEquals, assertStringIncludes } from "@std/assert";
 import router from "./router.ts";
-import { hub } from "./lib/room_hub.ts";
+import { hub } from "./lib/stores.ts";
 import type { FileMeta } from "./lib/protocol.ts";
 
 // These run before any test executes; the DB/object-store are lazy, so the

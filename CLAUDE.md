@@ -61,6 +61,24 @@ Deno + Remix v3 (`@remix-run/fetch-router`) 実装。sibling の
     `export`（外部 FS への書き出し）
 - `app/bundler/` — `Deno.bundle`（JS）＋ Tailwind v4（CSS）ビルド
 - `app/assets/style.css` — Tailwind + daisyUI 入力
+- `app/worker/` — Cloudflare Workers ターゲット（Deno 版と同じ shared
+  モジュールを再利用）
+  - `worker.ts` — Workers エントリ（`export default { fetch }` ＋
+    `export {
+    RoomDO }`）。`/ws/:roomId` の upgrade は
+    `env.ROOM.get(idFromName(roomId))` へ、その他は fetch-router
+    へ。静的アセットは Workers Assets が先に配信
+  - `room_do.ts` — `RoomDO`（**部屋ごと1つの Durable Object**）。`RoomHub`
+    をそのまま再利用（Cloudflare の WebSocket は `Sink` ダック型を満たす）
+  - `router.ts` — edge 用 fetch-router（SSR + REST。WS/staticFiles なし）
+  - `edge_deps.ts` — `env` バインディングから `RoomStore`
+    を組む（`@libsql/
+    client/web` + R2）。libSQL
+    クライアントは部屋の初回利用時に遅延生成
+  - `cf.d.ts` — 最小の CF 型定義（`DurableObjectNamespace` 等）
+  - `build.ts` — `Deno.bundle` で `dist/worker.js` を生成（jsr:/npm: を Deno
+    が解決）
+  - `wrangler.jsonc` — DO / R2 / Assets バインディングと env
 
 ## ルーティング
 
@@ -79,9 +97,38 @@ Deno + Remix v3 (`@remix-run/fetch-router`) 実装。sibling の
 - **サムネ本体**は R2（prod）/
   ローカルディレクトリ（dev）に置く（`object_store.ts`）。
 - **サムネの content-type** は `@kuboon/kv/turso.ts` の `TursoKvRepo` に置く。
-- リアルタイム（WS ハブ・holder）は現状プロセス内。CF Workers 化＝WebSocket を
-  Durable Object へ、libSQL を `@libsql/client/web` へ、R2 バインディングを
-  `object_store.setThumbBucket()` へ、は後続作業（別 PR）。
+- ストレージ層（`db_core` / `index_store` / `object_store` / `room_hub` /
+  `protocol`）は**ランタイム非依存**にしてあり、Deno と CF Workers の両方が
+  そのまま import できる。Deno ネイティブな配線は `lib/db.ts`（`@libsql/client`
+  ネイティブ）＋ `lib/stores.ts`（`hub` シングルトン）に隔離。CF 側の配線は
+  `app/worker/`（`@libsql/client/web` ＋ R2 ＋ per-room DO）。
+
+## Cloudflare Workers デプロイ
+
+Deno 版（`deno serve`）と CF Workers 版（`app/worker/`）はストレージ／ハブの
+共通モジュールを共有する。差分はランタイム配線のみ。
+
+- **リアルタイム**: 部屋ごとに1つの Durable Object（`RoomDO`,
+  `idFromName(roomId)`）が WebSocket と holder/presence を保持。Deno 版の
+  `RoomHub` をそのまま再利用（Cloudflare の WebSocket は `Sink`
+  ダック型を満たす）。
+- **index**: `@libsql/client/web`（HTTP 版）で Turso に接続。ネイティブ版は Deno
+  専用（ffi）なので edge では使えない。
+- **サムネ本体**: R2（`THUMB_BUCKET` バインディング → `R2ObjectStore`）。
+- **静的アセット**: `app/bundled/` を Workers Assets（`ASSETS` バインディング）
+  で Worker より前に配信。
+
+```bash
+deno task worker:build       # client を bundle → dist/worker.js を生成
+npx wrangler dev             # ローカル（DO/Assets は workerd, index は要 Turso）
+npx wrangler secret put TURSO_AUTH_TOKEN
+npx wrangler deploy
+```
+
+`wrangler.jsonc` の `vars.TURSO_DATABASE_URL` に本番 Turso の URL を設定
+（`TURSO_AUTH_TOKEN` は secret）。`@libsql/client/web` は HTTP 専用なので、
+`wrangler dev` でローカル index 同期まで通すにはローカル libSQL サーバ（sqld）が
+必要。DO の WS ハンドシェイク・ページ配信・型チェックはローカルで検証済み。
 
 ### 環境変数
 
@@ -89,12 +136,16 @@ Deno + Remix v3 (`@remix-run/fetch-router`) 実装。sibling の
   `TURSO_LOCAL_URL`（既定 `file:./.data/photorrent.db`、テストは `:memory:`）。
 - `THUMB_DIR` — dev のサムネ保存先（既定 `./.data/thumbs`）。prod は R2。
 
+CF Workers 側は同名の値を `wrangler.jsonc` の `vars`（`TURSO_DATABASE_URL`）／
+secret（`TURSO_AUTH_TOKEN`）と R2 バインディング（`THUMB_BUCKET`）で受ける。
+
 ## 開発
 
 ```bash
-deno task dev      # 開発サーバー起動（bundle してから deno serve --watch）
-deno task test     # テスト実行
-deno task check    # 型チェック + lint + fmt
+deno task dev          # 開発サーバー起動（bundle してから deno serve --watch）
+deno task test         # テスト実行
+deno task check        # 型チェック + lint + fmt
+deno task worker:build # CF Workers 用 bundle（client bundle → dist/worker.js）
 ```
 
 > ライブラリの一部は公開直後のため、この環境では `--minimum-dependency-age=0`

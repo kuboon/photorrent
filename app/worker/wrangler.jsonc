@@ -1,0 +1,21 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "photorrent",
+  // Pre-bundled by `deno task worker:build` (Deno resolves the jsr:/npm: deps).
+  "main": "dist/worker.js",
+  "compatibility_date": "2024-11-01",
+  // Client bundle (mod.js / room_page.js / style.css) served before the Worker.
+  "assets": { "directory": "../bundled", "binding": "ASSETS" },
+  // One Durable Object instance per room holds the live sockets + holders.
+  "durable_objects": {
+    "bindings": [{ "name": "ROOM", "class_name": "RoomDO" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["RoomDO"] }],
+  // Thumbnail bytes.
+  "r2_buckets": [
+    { "binding": "THUMB_BUCKET", "bucket_name": "photorrent-thumbs" }
+  ],
+  // Turso index DB. Set TURSO_DATABASE_URL here (or in .dev.vars locally) and
+  // TURSO_AUTH_TOKEN as a secret: `npx wrangler secret put TURSO_AUTH_TOKEN`.
+  "vars": { "TURSO_DATABASE_URL": "" }
+}

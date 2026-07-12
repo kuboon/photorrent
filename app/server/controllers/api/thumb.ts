@@ -10,7 +10,7 @@
 
 import type { BuildAction } from "@remix-run/fetch-router";
 import type { routes } from "../../routes.ts";
-import { hub } from "../../lib/room_hub.ts";
+import { hub } from "../../lib/stores.ts";
 
 /** Reject thumbnails larger than this (they should be small JPEGs). */
 const MAX_THUMB_BYTES = 200 * 1024;

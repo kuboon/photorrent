@@ -493,6 +493,12 @@
           "npm:@remix-run/static-middleware@0.4.8",
           "npm:@remix-run/ui@~0.1.1"
         ]
+      },
+      "app/worker": {
+        "dependencies": [
+          "npm:@libsql/client@~0.17.4",
+          "npm:@remix-run/fetch-router@0.18.2"
+        ]
       }
     }
   }

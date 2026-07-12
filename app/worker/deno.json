@@ -1,0 +1,11 @@
+{
+  "compilerOptions": {
+    "lib": ["deno.ns", "deno.unstable", "dom"],
+    "jsx": "react-jsx",
+    "jsxImportSource": "@remix-run/ui"
+  },
+  "imports": {
+    "@remix-run/fetch-router": "npm:@remix-run/fetch-router@0.18.2",
+    "@libsql/client/web": "npm:@libsql/client@^0.17.4/web"
+  }
+}

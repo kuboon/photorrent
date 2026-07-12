@@ -13,7 +13,12 @@
  */
 
 import type { ClientMsg, FileMeta, Holders, ServerMsg } from "./protocol.ts";
-import { createRoomStore, type RoomStore, type Thumb } from "./index_store.ts";
+import type { RoomStore, Thumb } from "./index_store.ts";
+
+/** Factory for a room's {@link RoomStore}. Supplied by the runtime wiring
+ * (`stores.ts` on Deno, `edge_deps.ts` on the Worker) so this class stays free
+ * of any storage/runtime imports and can run inside a Durable Object. */
+export type StoreFactory = (roomId: string) => RoomStore;
 
 /** The subset of `WebSocket` the hub needs. */
 export interface Sink {
@@ -35,10 +40,9 @@ export class RoomHub {
   private rooms = new Map<string, Room>();
 
   /**
-   * @param makeStore factory for a room's {@link RoomStore}. Defaults to the
-   * Turso-backed store; tests inject one over an in-memory client.
+   * @param makeStore factory for a room's {@link RoomStore} (Deno or edge).
    */
-  constructor(private makeStore = createRoomStore) {}
+  constructor(private makeStore: StoreFactory) {}
 
   private getRoom(roomId: string): Room {
     let room = this.rooms.get(roomId);
@@ -225,6 +229,3 @@ export class RoomHub {
     return this.rooms.get(roomId)?.sockets.size ?? 0;
   }
 }
-
-/** Process-wide singleton used by the controllers. */
-export const hub = new RoomHub();
