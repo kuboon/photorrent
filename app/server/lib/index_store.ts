@@ -14,8 +14,8 @@ import { TursoKvRepo } from "@kuboon/kv/turso.ts";
 import { sql } from "@remix-run/data-table";
 import type { Client } from "@libsql/client";
 import type { FileMeta } from "./protocol.ts";
-import { defaultDeps, type Deps, files } from "./db.ts";
-import { defaultObjectStore, type ObjectStore } from "./object_store.ts";
+import { type Deps, files } from "./db_core.ts";
+import type { ObjectStore } from "./object_store.ts";
 
 /** Stored thumbnail: raw bytes plus their content-type. */
 export interface Thumb {
@@ -32,11 +32,14 @@ export interface RoomStore {
   getThumb(id: string): Promise<Thumb | null>;
 }
 
-/** Overridable backends (tests pass an in-memory client + temp object store). */
+/** Injected backends. Required so this module stays free of any runtime-
+ * specific defaults (Deno env / native client) and imports cleanly on the
+ * edge; the Deno wiring lives in `stores.ts`, the Worker's in `edge_deps.ts`. */
 export interface RoomStoreDeps {
-  deps?: Deps;
+  deps: Deps;
+  objectStore: ObjectStore;
+  /** libSQL client for the thumbnail-content-type KV. Defaults to `deps.client`. */
   kvClient?: Client;
-  objectStore?: ObjectStore;
 }
 
 type FileRow = {
@@ -52,11 +55,10 @@ type FileRow = {
 
 export function createRoomStore(
   roomId: string,
-  overrides: RoomStoreDeps = {},
+  backends: RoomStoreDeps,
 ): RoomStore {
-  const deps = overrides.deps ?? defaultDeps();
-  const objectStore = overrides.objectStore ?? defaultObjectStore();
-  const kvClient = overrides.kvClient ?? deps.client;
+  const { deps, objectStore } = backends;
+  const kvClient = backends.kvClient ?? deps.client;
   const thumbCt = new TursoKvRepo<{ ct: string }>(
     kvClient,
     ["room", roomId, "thumbct"],

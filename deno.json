@@ -3,17 +3,24 @@
     "./app",
     "./app/bundler",
     "./app/server",
-    "./app/client"
+    "./app/client",
+    "./app/worker"
   ],
   "tasks": {
     "dev": "deno task --cwd app/server dev",
     "serve": "deno task --cwd app/server serve",
     "bundle": "deno task --cwd app/bundler build",
+    "worker:build": "deno task bundle && deno run -A --unstable-bundle app/worker/build.ts",
     "test": "deno test -P",
     "check": "deno check && deno lint && deno fmt --check"
   },
   "nodeModulesDir": "auto",
   "unstable": ["bundle", "kv"],
+  "exclude": [
+    "app/bundled",
+    "app/worker/dist",
+    "app/worker/.wrangler"
+  ],
   "compilerOptions": {
     "jsx": "react-jsx",
     "jsxImportSource": "@remix-run/ui"

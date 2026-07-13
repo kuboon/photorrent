@@ -40,7 +40,7 @@ interface Download {
   relayTid?: string; // active relay transfer id
   conn?: RtcConnection;
   sink?: DataSink;
-  timer?: number;
+  timer?: ReturnType<typeof setTimeout>;
 }
 
 export interface TransferIO {

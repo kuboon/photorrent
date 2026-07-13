@@ -7,7 +7,7 @@
 
 import type { BuildAction } from "@remix-run/fetch-router";
 import type { routes } from "../../routes.ts";
-import { hub } from "../../lib/room_hub.ts";
+import { hub } from "../../lib/stores.ts";
 
 export const roomIndexAction = {
   async handler(context) {

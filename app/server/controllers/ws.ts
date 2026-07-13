@@ -19,7 +19,7 @@
 
 import type { BuildAction } from "@remix-run/fetch-router";
 import type { routes } from "../routes.ts";
-import { hub } from "../lib/room_hub.ts";
+import { hub } from "../lib/stores.ts";
 import type { ClientMsg } from "../lib/protocol.ts";
 
 /** Perform the WebSocket upgrade for a room and wire it to the hub. */
