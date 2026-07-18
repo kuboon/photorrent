@@ -12,6 +12,7 @@
     "jsr:@std/path@^1.1.4": "1.1.6",
     "jsr:@std/ulid@1": "1.0.0",
     "npm:@jridgewell/remapping@^2.3.5": "2.3.5",
+    "npm:@libsql/client@0.17.4": "0.17.4",
     "npm:@libsql/client@~0.17.4": "0.17.4",
     "npm:@remix-run/data-table@0.3": "0.3.0",
     "npm:@remix-run/fetch-router@0.18.2": "0.18.2",
@@ -34,13 +35,13 @@
       "integrity": "82b0d2d58e99c893dc667814a606af74ee04f62235d120d57e0d8e4b68ed74c3",
       "dependencies": [
         "jsr:@std/ulid",
-        "npm:@libsql/client"
+        "npm:@libsql/client@~0.17.4"
       ]
     },
     "@kuboon/remix-data-table-sqlite-turso@0.0.0": {
       "integrity": "b965ecffb1a8637abfb4c58bd3c878fff2674862149dd1622138fc29b5d003d5",
       "dependencies": [
-        "npm:@libsql/client",
+        "npm:@libsql/client@~0.17.4",
         "npm:@remix-run/data-table"
       ]
     },

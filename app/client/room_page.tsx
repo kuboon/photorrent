@@ -37,8 +37,13 @@ import { exportAll, isExportSupported } from "./lib/export.ts";
 
 export interface RoomPageProps {
   roomId: string;
+  /** Album title from the shared URL's `?name=` (may be empty). */
+  albumName?: string;
   [key: string]: SerializableValue;
 }
+
+/** localStorage key for the participant's display name (shared across rooms). */
+const NAME_KEY = "photorrent:name";
 
 const isClientEnv = typeof globalThis !== "undefined" &&
   typeof (globalThis as { document?: unknown }).document !== "undefined";
@@ -61,6 +66,7 @@ export const RoomPage = clientEntry(
   "/room_page.js#RoomPage",
   function RoomPage(handle: Handle<RoomPageProps>) {
     const roomId = handle.props.roomId;
+    const albumName = (handle.props.albumName ?? "").trim();
 
     const files = new Map<string, FileMeta>();
     const holders = new Map<string, Set<string>>();
@@ -73,6 +79,7 @@ export const RoomPage = clientEntry(
     let exportMsg: string | null = null;
 
     let peerId = "";
+    let myName = "";
     let unwanted: UnwantedSet | null = null;
     let ws: WsClient | null = null;
     let transfer: TransferManager | null = null;
@@ -163,6 +170,7 @@ export const RoomPage = clientEntry(
 
     if (isClientEnv) {
       peerId = crypto.randomUUID();
+      myName = localStorage.getItem(NAME_KEY) ?? "";
       unwanted = new UnwantedSet(roomId);
       opfsOk = opfsAvailable();
       // Defer opening the socket until after the first render: the WsClient
@@ -220,6 +228,7 @@ export const RoomPage = clientEntry(
           height: thumb.height,
           thumbUrl,
           uploader: peerId,
+          ...(myName.trim() ? { uploaderName: myName.trim() } : {}),
           createdAt: Date.now(),
         };
         files.set(id, meta);
@@ -262,6 +271,21 @@ export const RoomPage = clientEntry(
       handle.update();
     };
 
+    // Persist the participant's display name; new uploads read it live, so no
+    // re-render is needed (the input keeps its own DOM value while typing).
+    const onNameInput = (value: string) => {
+      myName = value;
+      try {
+        localStorage.setItem(NAME_KEY, value);
+      } catch {
+        // Private mode / storage disabled — name just won't persist.
+      }
+    };
+
+    // Who uploaded a file, for display under its thumbnail.
+    const uploaderLabel = (f: FileMeta): string =>
+      f.uploader === peerId ? "自分" : (f.uploaderName?.trim() || "匿名");
+
     // Per-file UI state (badge + dim). Returns null when there's no badge.
     const fileBadge = (
       f: FileMeta,
@@ -298,12 +322,29 @@ export const RoomPage = clientEntry(
         <main class="mx-auto w-full max-w-5xl p-4 sm:p-8 space-y-6">
           <div class="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h1 class="text-2xl font-bold">📸 アルバム</h1>
+              <h1 class="text-2xl font-bold">
+                📸 {albumName || "アルバム"}
+              </h1>
               <p class="text-sm text-base-content/60">
                 この URL を参加者に配ってください。
               </p>
             </div>
             <div class="flex items-center gap-2">
+              <label class="input input-sm input-bordered flex items-center gap-1">
+                <span class="text-base-content/50">👤</span>
+                <input
+                  type="text"
+                  class="grow"
+                  placeholder="あなたの名前"
+                  maxlength={40}
+                  value={myName}
+                  mix={[
+                    on<HTMLInputElement, "input">("input", (e) => {
+                      onNameInput((e.currentTarget as HTMLInputElement).value);
+                    }),
+                  ]}
+                />
+              </label>
               <span class={`badge ${statusBadge} badge-sm`}>{statusLabel}</span>
               {!opfsOk && (
                 <span class="badge badge-outline badge-warning badge-sm">
@@ -402,6 +443,12 @@ export const RoomPage = clientEntry(
                           title={f.filename}
                         >
                           {f.filename}
+                        </div>
+                        <div
+                          class="text-xs text-base-content/50 truncate"
+                          title={uploaderLabel(f)}
+                        >
+                          👤 {uploaderLabel(f)}
                         </div>
                         <div class="flex items-center justify-between text-xs text-base-content/60">
                           <span>{humanSize(f.size)}</span>

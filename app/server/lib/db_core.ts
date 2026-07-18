@@ -34,6 +34,7 @@ export const files = table({
     width: c.integer(),
     height: c.integer(),
     uploader: c.varchar(255),
+    uploader_name: c.varchar(255),
     created_at: c.integer(),
   },
 });
@@ -48,8 +49,13 @@ const CREATE_FILES = sql`CREATE TABLE IF NOT EXISTS files (
   width INTEGER NOT NULL,
   height INTEGER NOT NULL,
   uploader TEXT NOT NULL,
+  uploader_name TEXT,
   created_at INTEGER NOT NULL
 )`;
+// Additive migration for databases created before `uploader_name` existed.
+// Fresh DBs already have the column (from CREATE above), so this throws
+// "duplicate column name" there — which we swallow.
+const ADD_UPLOADER_NAME = sql`ALTER TABLE files ADD COLUMN uploader_name TEXT`;
 const CREATE_ROOM_IDX =
   sql`CREATE INDEX IF NOT EXISTS files_room ON files (room)`;
 
@@ -74,6 +80,11 @@ export function makeDeps(client: Client): Deps {
       if (!p) {
         p = (async () => {
           await db.exec(CREATE_FILES);
+          try {
+            await db.exec(ADD_UPLOADER_NAME);
+          } catch {
+            // Column already present (fresh DB) — nothing to migrate.
+          }
           await db.exec(CREATE_ROOM_IDX);
         })();
         schemaEnsured.set(client, p);

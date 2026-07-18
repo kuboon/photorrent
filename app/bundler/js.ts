@@ -12,6 +12,7 @@
 
 const CLIENT_ENTRIES = [
   "mod.ts",
+  "home.tsx",
   "room_page.tsx",
 ] as const;
 

@@ -1,42 +1,31 @@
 /**
- * GET / — landing page with a "create album" action.
+ * GET / — landing page with a "name it + create album" action.
  *
- * A fresh, shareable roomId is minted server-side on each load and linked
- * directly, so entering a room needs no client JS: clicking navigates to
- * `/room/<id>`, whose URL is the thing you hand out to party guests.
+ * The roomId is minted client-side by the {@link CreateAlbum} entry when the
+ * button is pressed (so the optional album name can be folded into the target
+ * URL as `?name=…`); the page itself is otherwise static.
  */
 
 import type { BuildAction } from "@remix-run/fetch-router";
 import type { routes } from "../routes.ts";
 import { renderPage } from "../utils/render.tsx";
-
-/** URL-friendly random room id (~16 base64url chars). */
-function newRoomId(): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(12));
-  return btoa(String.fromCharCode(...bytes))
-    .replaceAll("+", "-")
-    .replaceAll("/", "_")
-    .replaceAll("=", "");
-}
+import { CreateAlbum } from "../../client/home.tsx";
 
 export const homeAction = {
   handler(context) {
-    const roomId = newRoomId();
     return renderPage(
       context,
       <main class="mx-auto w-full max-w-2xl p-8 space-y-6">
         <div class="hero bg-base-200 rounded-box">
           <div class="hero-content text-center">
-            <div>
+            <div class="flex flex-col items-center">
               <h1 class="text-3xl font-bold">📸 photorrent</h1>
               <p class="py-4">
                 パーティの写真・動画をみんなで共有。アルバムを作って URL
                 を配るだけ。
                 アップした写真は参加者全員にリアルタイムで同期されます。
               </p>
-              <a class="btn btn-primary btn-lg" href={`/room/${roomId}`}>
-                アルバムを作成
-              </a>
+              <CreateAlbum />
             </div>
           </div>
         </div>
