@@ -4,6 +4,10 @@
   // Pre-bundled by `deno task worker:build` (Deno resolves the jsr:/npm: deps).
   "main": "dist/worker.js",
   "compatibility_date": "2024-11-01",
+  // Runtime logs (Workers Logs / observability) so exceptions are captured.
+  "observability": {
+    "logs": { "enabled": true, "invocation_logs": false }
+  },
   // Client bundle (mod.js / room_page.js / style.css) served before the Worker.
   "assets": { "directory": "../bundled", "binding": "ASSETS" },
   // One Durable Object instance per room holds the live sockets + holders.

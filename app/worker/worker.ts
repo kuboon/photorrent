@@ -18,19 +18,33 @@ const WS_PATH = /^\/ws\/([^/]+)\/?$/;
 export { RoomDO };
 
 export default {
-  fetch(request: Request, env: Env): Response | Promise<Response> {
+  async fetch(request: Request, env: Env): Promise<Response> {
     setEnv(env);
 
-    if (request.headers.get("upgrade")?.toLowerCase() === "websocket") {
-      const match = new URL(request.url).pathname.match(WS_PATH);
-      if (match) {
-        const stub = env.ROOM.get(
-          env.ROOM.idFromName(decodeURIComponent(match[1])),
-        );
-        return stub.fetch(request);
+    try {
+      if (request.headers.get("upgrade")?.toLowerCase() === "websocket") {
+        const match = new URL(request.url).pathname.match(WS_PATH);
+        if (match) {
+          const stub = env.ROOM.get(
+            env.ROOM.idFromName(decodeURIComponent(match[1])),
+          );
+          return await stub.fetch(request);
+        }
       }
-    }
 
-    return router.fetch(request);
+      return await router.fetch(request);
+    } catch (err) {
+      // Surface the failure to Workers Logs (observability) *and* the response
+      // body so a 500 isn't opaque while we validate the edge storage wiring.
+      const e = err as Error;
+      const url = new URL(request.url);
+      console.error("[worker] unhandled error", url.pathname, e?.stack ?? e);
+      return new Response(
+        `worker error at ${url.pathname}: ${e?.message ?? e}\n${
+          e?.stack ?? ""
+        }`,
+        { status: 500, headers: { "content-type": "text/plain" } },
+      );
+    }
   },
 };
