@@ -130,6 +130,37 @@ npx wrangler deploy
 `wrangler dev` でローカル index 同期まで通すにはローカル libSQL サーバ（sqld）が
 必要。DO の WS ハンドシェイク・ページ配信・型チェックはローカルで検証済み。
 
+R2
+バケットは初回だけ手動作成する（`npx wrangler r2 bucket create
+photorrent-thumbs`）。DO
+の SQLite マイグレーションは `wrangler deploy` が自動適用する。
+
+### CI/CD
+
+- **テスト**は GitHub Actions（`.github/workflows/test.yml` — push(main)/PR で
+  `deno task check` + `test`）。
+- **デプロイ**は Cloudflare Workers Builds（Git 連携）が担う。GitHub Actions
+  では デプロイしない。この Worker は Durable
+  Object（`export { RoomDO }`）を持つため、 **Pages ではなく Workers**
+  として接続する（Pages Functions は DO クラスを export できない）。Cloudflare
+  の GitHub App でリポジトリを接続し、Worker の Builds 設定で以下を指定する:
+  - **Root directory**: リポジトリルート（`/`）。ビルドは workspace 全体
+    （`app/client`・`app/server`・`app/bundler`）を要するため。
+  - **Build command**:
+    `curl -fsSL https://deno.land/install.sh | sh -s -- -y && export PATH="$HOME/.deno/bin:$PATH" && deno task worker:build`
+    （`app/bundled` と `app/worker/dist/worker.js` を生成。どちらも gitignore
+    済みで CI がビルドする）。
+  - **Deploy command**: `npx wrangler deploy --config app/worker/wrangler.jsonc`
+    （`main`・`assets.directory` は config 位置基準で解決されるので repo
+    ルートから 実行して問題ない。DO の SQLite
+    マイグレーションもデプロイ時に自動適用）。
+- `wrangler.jsonc` がデプロイ設定（name / main / bindings / DO migrations /
+  vars） の source of truth。`.json` へのリネームは不要（Workers Builds は jsonc
+  対応）。
+- 本番 Turso の URL は `vars.TURSO_DATABASE_URL`、`TURSO_AUTH_TOKEN` は Worker
+  secret（dashboard の Settings → Variables and Secrets、または
+  `npx wrangler secret put TURSO_AUTH_TOKEN`）で設定する。
+
 ### 環境変数
 
 - `TURSO_DATABASE_URL` / `TURSO_AUTH_TOKEN` — Turso 本番 DB。未設定なら
