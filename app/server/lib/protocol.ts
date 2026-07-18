@@ -26,8 +26,10 @@ export interface FileMeta {
   height: number;
   /** `"/api/room/<roomId>/thumb?id=<fileId>"` — where the thumbnail bytes live. */
   thumbUrl: string;
-  /** Ephemeral peerId of the uploader (Phase 1 has no accounts). */
+  /** Ephemeral peerId of the uploader (holder identity; no accounts). */
   uploader: string;
+  /** Display name the uploader typed for themselves (may be empty/absent). */
+  uploaderName?: string;
   /** Epoch milliseconds when the file was added. */
   createdAt: number;
 }

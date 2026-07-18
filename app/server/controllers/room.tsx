@@ -15,6 +15,12 @@ import { RoomPage } from "../../client/room_page.tsx";
 export const roomAction = {
   handler(context) {
     const roomId = context.params.roomId;
-    return renderPage(context, <RoomPage roomId={roomId} />);
+    // The album name (optional) rides in the shared URL as `?name=…`.
+    const albumName = new URL(context.request.url).searchParams.get("name") ??
+      "";
+    return renderPage(
+      context,
+      <RoomPage roomId={roomId} albumName={albumName} />,
+    );
   },
 } satisfies BuildAction<"GET", typeof routes.room>;

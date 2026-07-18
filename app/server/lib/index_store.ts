@@ -50,6 +50,7 @@ type FileRow = {
   width: number;
   height: number;
   uploader: string;
+  uploader_name: string | null;
   created_at: number;
 };
 
@@ -75,6 +76,7 @@ export function createRoomStore(
     height: Number(row.height),
     thumbUrl: `/api/room/${roomId}/thumb?id=${row.file_id}`,
     uploader: row.uploader,
+    ...(row.uploader_name ? { uploaderName: row.uploader_name } : {}),
     createdAt: Number(row.created_at),
   });
 
@@ -84,15 +86,16 @@ export function createRoomStore(
       // Idempotent upsert — re-adding the same content id refreshes metadata.
       await deps.db.exec(sql`
         INSERT INTO files
-          (id, room, file_id, filename, size, mime, width, height, uploader, created_at)
+          (id, room, file_id, filename, size, mime, width, height, uploader, uploader_name, created_at)
         VALUES
           (${rowKey(file.id)}, ${roomId}, ${file.id}, ${file.filename},
            ${file.size}, ${file.mime}, ${file.width}, ${file.height},
-           ${file.uploader}, ${file.createdAt})
+           ${file.uploader}, ${file.uploaderName ?? null}, ${file.createdAt})
         ON CONFLICT(id) DO UPDATE SET
           filename = excluded.filename, size = excluded.size,
           mime = excluded.mime, width = excluded.width,
           height = excluded.height, uploader = excluded.uploader,
+          uploader_name = excluded.uploader_name,
           created_at = excluded.created_at`);
     },
 

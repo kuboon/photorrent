@@ -40,8 +40,9 @@ Deno.test("GET / (frame) renders the create-album fragment", async () => {
   assertEquals(res.status, 200);
   const html = await res.text();
   assertStringIncludes(html, "アルバムを作成");
-  // A fresh, shareable roomId is minted into the link.
-  assertStringIncludes(html, 'href="/room/');
+  // The create control is the CreateAlbum client entry (mints the roomId +
+  // folds the album name into the URL in the browser).
+  assertStringIncludes(html, "/home.js");
 });
 
 Deno.test("GET /room/:roomId (frame) renders the RoomPage client entry", async () => {
