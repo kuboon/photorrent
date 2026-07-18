@@ -15,7 +15,9 @@
   "r2_buckets": [
     { "binding": "THUMB_BUCKET", "bucket_name": "photorrent-thumbs" }
   ],
-  // Turso index DB. Set TURSO_DATABASE_URL here (or in .dev.vars locally) and
-  // TURSO_AUTH_TOKEN as a secret: `npx wrangler secret put TURSO_AUTH_TOKEN`.
-  "vars": { "TURSO_DATABASE_URL": "" }
+  // Turso index DB. The URL is not secret; TURSO_AUTH_TOKEN is a Worker secret
+  // (`npx wrangler secret put TURSO_AUTH_TOKEN`, or the dashboard).
+  "vars": {
+    "TURSO_DATABASE_URL": "libsql://photorrent-kuboon.aws-ap-northeast-1.turso.io"
+  }
 }
