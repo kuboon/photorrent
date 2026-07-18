@@ -44,16 +44,27 @@ export class RoomDO {
         server.send(JSON.stringify({ t: "error", message: "invalid json" }));
         return;
       }
-      if (msg.t === "join") {
-        peerId = msg.peerId;
-        await this.hub.join(roomId, peerId, server);
-        return;
+      try {
+        if (msg.t === "join") {
+          peerId = msg.peerId;
+          await this.hub.join(roomId, peerId, server);
+          return;
+        }
+        if (peerId === null) {
+          server.send(JSON.stringify({ t: "error", message: "join first" }));
+          return;
+        }
+        await this.hub.handle(roomId, peerId, msg);
+      } catch (err) {
+        const e = err as Error;
+        console.error("[room_do]", roomId, msg.t, e?.stack ?? e);
+        server.send(
+          JSON.stringify({
+            t: "error",
+            message: `${msg.t}: ${e?.message ?? e}`,
+          }),
+        );
       }
-      if (peerId === null) {
-        server.send(JSON.stringify({ t: "error", message: "join first" }));
-        return;
-      }
-      await this.hub.handle(roomId, peerId, msg);
     });
 
     server.addEventListener("close", () => {
