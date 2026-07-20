@@ -271,8 +271,10 @@ export const RoomPage = clientEntry(
       handle.update();
     };
 
-    // Persist the participant's display name; new uploads read it live, so no
-    // re-render is needed (the input keeps its own DOM value while typing).
+    // Persist the participant's display name. The input's `value` prop makes
+    // it a controlled field, and the framework restores the DOM value to that
+    // prop after every native `input` event — so we must re-render on every
+    // keystroke to keep the controlled value current, or typing gets wiped.
     const onNameInput = (value: string) => {
       myName = value;
       try {
@@ -280,6 +282,7 @@ export const RoomPage = clientEntry(
       } catch {
         // Private mode / storage disabled — name just won't persist.
       }
+      handle.update();
     };
 
     // Who uploaded a file, for display under its thumbnail.
