@@ -4,13 +4,16 @@
     "./app/bundler",
     "./app/server",
     "./app/client",
-    "./app/worker"
+    "./app/worker",
+    "./app/cli"
   ],
   "tasks": {
     "dev": "deno task --cwd app/server dev",
     "serve": "deno task --cwd app/server serve",
     "bundle": "deno task --cwd app/bundler build",
     "worker:build": "deno task bundle && deno run -A --unstable-bundle app/worker/build.ts",
+    "cli": "deno task --cwd app/cli start",
+    "cli:build": "deno task --cwd app/cli build",
     "test": "deno test -P",
     "check": "deno check && deno lint && deno fmt --check"
   },
