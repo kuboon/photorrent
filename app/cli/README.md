@@ -63,3 +63,7 @@ deno task cli:build windows   # キーワードで対象を絞る
 ```bash
 git tag cli-v0.1.0 && git push origin cli-v0.1.0
 ```
+
+Actions UI の「Run workflow」から手動実行もできる。`tag` を指定するとその
+タグ（未作成なら選んだ ref に作成）で Release を公開し、空のままなら
+ビルドのみ（Release は作らず run アーティファクトとして上がる）。

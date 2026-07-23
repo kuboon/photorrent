@@ -2,14 +2,22 @@ name: release-cli
 
 # Cut a CLI release by pushing a tag, e.g.:
 #   git tag cli-v0.1.0 && git push origin cli-v0.1.0
+# Or run it manually from the Actions UI ("Run workflow"): pass a `tag` to
+# publish a release under that tag (created at the chosen ref if it doesn't
+# exist yet), or leave `tag` empty to only build the binaries for inspection
+# (uploaded as a run artifact, no release).
 # `deno compile` cross-compiles every target from a single Linux runner, so no
-# per-OS build matrix is needed. `workflow_dispatch` builds the binaries for
-# inspection (uploaded as a run artifact) without publishing a release.
+# per-OS build matrix is needed.
 
 on:
   push:
     tags: ["cli-v*"]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. cli-v0.1.0). Leave empty to only build artifacts without publishing a release."
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -48,9 +56,10 @@ jobs:
           path: app/cli/artifacts/*
 
       - name: Publish release
-        if: startsWith(github.ref, 'refs/tags/')
+        if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.tag != ''
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
           files: app/cli/artifacts/*
           generate_release_notes: true
           fail_on_unmatched_files: true
