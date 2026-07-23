@@ -1,0 +1,25 @@
+{
+  "name": "@photorrent/cli",
+  "version": "0.1.0",
+  "exports": "./main.ts",
+  "tasks": {
+    "start": "deno run --allow-read --allow-write --allow-net ./main.ts",
+    "check": "deno check; deno lint; deno test -P; deno fmt --check",
+    "build": "deno run -A ./build.ts"
+  },
+  "compilerOptions": {
+    "lib": ["deno.window", "deno.ns"]
+  },
+  "imports": {
+    "@std/assert": "jsr:@std/assert@^1.0.19",
+    "@std/media-types": "jsr:@std/media-types@^1.1.0",
+    "@std/path": "jsr:@std/path@^1.1.0"
+  },
+  "permissions": {
+    "default": {
+      "read": true,
+      "write": true,
+      "net": true
+    }
+  }
+}

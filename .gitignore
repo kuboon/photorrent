@@ -2,6 +2,7 @@
 .data/
 .wrangler/
 /app/worker/dist/
+/app/cli/dist/
 node_modules/
 *.local
 .DS_Store
