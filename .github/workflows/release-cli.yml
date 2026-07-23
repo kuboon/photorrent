@@ -1,0 +1,65 @@
+name: release-cli
+
+# Cut a CLI release by pushing a tag, e.g.:
+#   git tag cli-v0.1.0 && git push origin cli-v0.1.0
+# Or run it manually from the Actions UI ("Run workflow"): pass a `tag` to
+# publish a release under that tag (created at the chosen ref if it doesn't
+# exist yet), or leave `tag` empty to only build the binaries for inspection
+# (uploaded as a run artifact, no release).
+# `deno compile` cross-compiles every target from a single Linux runner, so no
+# per-OS build matrix is needed.
+
+on:
+  push:
+    tags: ["cli-v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. cli-v0.1.0). Leave empty to only build artifacts without publishing a release."
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: denoland/setup-deno@v2
+
+      - name: Build all targets
+        run: deno task cli:build
+
+      - name: Package archives + checksums
+        run: |
+          set -euo pipefail
+          out="$PWD/app/cli/artifacts"
+          mkdir -p "$out"
+          cd app/cli/dist
+          for d in */; do
+            name="${d%/}"
+            if [ -f "$name/photorrent.exe" ]; then
+              (cd "$name" && zip -q "$out/photorrent-$name.zip" photorrent.exe)
+            else
+              tar -czf "$out/photorrent-$name.tar.gz" -C "$name" photorrent
+            fi
+          done
+          cd "$out"
+          sha256sum photorrent-* > SHA256SUMS.txt
+          ls -la
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: photorrent-cli
+          path: app/cli/artifacts/*
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.tag != ''
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          files: app/cli/artifacts/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true

@@ -139,6 +139,11 @@ photorrent-thumbs`）。DO
 
 - **テスト**は GitHub Actions（`.github/workflows/test.yml` — push(main)/PR で
   `deno task check` + `test`）。
+- **CLI リリース**は GitHub Actions（`.github/workflows/release-cli.yml` —
+  `cli-v*` タグ push で `deno task cli:build` により全 OS
+  バイナリをクロスコンパイルし、 アーカイブ＋`SHA256SUMS.txt` を GitHub Release
+  に添付）。`deno compile` は単一の Linux runner
+  から全ターゲットを吐けるのでビルドマトリックスは不要。
 - **デプロイ**は Cloudflare Workers Builds（Git 連携）が担う。GitHub Actions
   では デプロイしない。この Worker は Durable
   Object（`export { RoomDO }`）を持つため、 **Pages ではなく Workers**
