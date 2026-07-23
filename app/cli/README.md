@@ -26,6 +26,22 @@ photorrent --name きゅぼん https://example.com/room/XXXX
 - ダウンロードした本体は `./shared/` に保存し、`have`
   を送って自分も配信元になる。
 
+## インストール（GitHub Releases）
+
+各 OS 向けのビルド済みバイナリを [Releases](https://github.com/kuboon/photorrent/releases)
+から配布している（`photorrent-<os>-<arch>` の tar.gz / zip と `SHA256SUMS.txt`）。
+
+```bash
+# 例: Linux x64
+curl -fsSL -o photorrent.tar.gz \
+  https://github.com/kuboon/photorrent/releases/latest/download/photorrent-linux-x64.tar.gz
+tar xzf photorrent.tar.gz
+chmod +x photorrent
+./photorrent new https://example.com
+```
+
+Windows は `photorrent-windows-x64.zip` を展開して `photorrent.exe` を実行する。
+
 ## ビルド
 
 ```bash
@@ -36,3 +52,12 @@ deno task cli:build windows   # キーワードで対象を絞る
 
 `deno compile` で Linux / Windows / macOS（x64・arm64）向けの自己完結バイナリを
 出力する。ネイティブ依存が無いのでクロスコンパイルはそのまま通る。
+
+### リリース手順
+
+`cli-v*` タグを push すると `release-cli` workflow が全 OS 向けにビルドし、
+アーカイブ＋チェックサムを GitHub Release に添付する。
+
+```bash
+git tag cli-v0.1.0 && git push origin cli-v0.1.0
+```
