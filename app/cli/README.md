@@ -28,8 +28,10 @@ photorrent --name きゅぼん https://example.com/room/XXXX
 
 ## インストール（GitHub Releases）
 
-各 OS 向けのビルド済みバイナリを [Releases](https://github.com/kuboon/photorrent/releases)
-から配布している（`photorrent-<os>-<arch>` の tar.gz / zip と `SHA256SUMS.txt`）。
+各 OS 向けのビルド済みバイナリを
+[Releases](https://github.com/kuboon/photorrent/releases)
+から配布している（`photorrent-<os>-<arch>` の tar.gz / zip と
+`SHA256SUMS.txt`）。
 
 ```bash
 # 例: Linux x64
