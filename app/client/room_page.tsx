@@ -29,11 +29,33 @@ import type { FileMeta, ServerMsg } from "../server/lib/protocol.ts";
 import type { RtcSignalData } from "./lib/peer.ts";
 import { contentHash } from "./lib/hash.ts";
 import { generateThumbnail } from "./lib/thumbnail.ts";
-import { isAvailable as opfsAvailable, listIds, save } from "./lib/opfs.ts";
-import { UnwantedSet } from "./lib/unwanted.ts";
+import {
+  getFile,
+  isAvailable as opfsAvailable,
+  listIds,
+  save,
+} from "./lib/opfs.ts";
 import { type ConnStatus, WsClient } from "./lib/ws_client.ts";
 import { type FileState, TransferManager } from "./lib/transfer.ts";
 import { exportAll, isExportSupported } from "./lib/export.ts";
+import { makeZip } from "./lib/zip.ts";
+
+/** Classic (non-ZIP64) zip caps sizes/offsets at 32 bits; stay under 4 GB.
+ * Below 4 GiB with margin, so the bulk-download zip never needs ZIP64. */
+const MAX_ZIP_BYTES = 4_000_000_000;
+
+/** Trigger a browser "save as" for a Blob via a transient object URL. */
+function saveBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  // Revoke after the download has surely started.
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
 
 export interface RoomPageProps {
   roomId: string;
@@ -72,15 +94,17 @@ export const RoomPage = clientEntry(
     const holders = new Map<string, Set<string>>();
     const held = new Set<string>(); // file ids whose body is in my OPFS
     const dlState = new Map<string, FileState>(); // downloading | error (transient)
+    const selected = new Set<string>(); // file ids checked for download
     let peers: string[] = [];
     let status: ConnStatus = "connecting";
     let uploading = 0;
     let opfsOk = true;
     let exportMsg: string | null = null;
+    let zipMsg: string | null = null;
+    let zipping = false;
 
     let peerId = "";
     let myName = "";
-    let unwanted: UnwantedSet | null = null;
     let ws: WsClient | null = null;
     let transfer: TransferManager | null = null;
 
@@ -100,7 +124,6 @@ export const RoomPage = clientEntry(
       const file = files.get(id);
       if (!file) return;
       if (file.uploader === peerId || held.has(id)) return;
-      if (unwanted?.has(id)) return;
       if (transfer.isDownloading(id)) return;
       const holder = pickHolder(id);
       if (holder) transfer.download(id, file.mime, holder);
@@ -171,7 +194,6 @@ export const RoomPage = clientEntry(
     if (isClientEnv) {
       peerId = crypto.randomUUID();
       myName = localStorage.getItem(NAME_KEY) ?? "";
-      unwanted = new UnwantedSet(roomId);
       opfsOk = opfsAvailable();
       // Defer opening the socket until after the first render: the WsClient
       // reports status synchronously, and calling handle.update() during the
@@ -246,10 +268,55 @@ export const RoomPage = clientEntry(
       for (const file of Array.from(list)) void processFile(file);
     };
 
-    const onToggleUnwanted = (id: string) => {
-      const nowUnwanted = unwanted?.toggle(id) ?? false;
-      if (!nowUnwanted) maybeDownload(id); // un-marked: fetch it after all
+    // Selection for download. Only held (downloaded) files can be selected.
+    const onToggleSelect = (id: string) => {
+      if (selected.has(id)) selected.delete(id);
+      else selected.add(id);
       handle.update();
+    };
+
+    // Running totals for the selection toolbar.
+    const selectedStats = (): { count: number; bytes: number } => {
+      let count = 0, bytes = 0;
+      for (const f of files.values()) {
+        if (selected.has(f.id) && held.has(f.id)) {
+          count++;
+          bytes += f.size;
+        }
+      }
+      return { count, bytes };
+    };
+
+    // Save one already-downloaded file to the device.
+    const onDownloadOne = async (f: FileMeta) => {
+      const file = await getFile(f.id);
+      if (file) saveBlob(file, f.filename);
+    };
+
+    // Bundle the selected (held) files into a zip and save it.
+    const onDownloadZip = async () => {
+      const items = [...files.values()]
+        .filter((f) => selected.has(f.id) && held.has(f.id));
+      if (items.length === 0) return;
+      zipping = true;
+      zipMsg = "ZIP を作成中…";
+      handle.update();
+      try {
+        const entries: { name: string; blob: Blob }[] = [];
+        for (const f of items) {
+          const file = await getFile(f.id);
+          if (file) entries.push({ name: f.filename, blob: file });
+        }
+        const zip = await makeZip(entries);
+        saveBlob(zip, `${albumName || "photorrent"}.zip`);
+        zipMsg = null;
+      } catch (err) {
+        console.error("[room] zip failed", err);
+        zipMsg = "ZIP の作成に失敗しました";
+      } finally {
+        zipping = false;
+        handle.update();
+      }
     };
 
     const onExport = async () => {
@@ -300,7 +367,6 @@ export const RoomPage = clientEntry(
         return { label: "受信中", cls: "badge-info", spin: true };
       }
       if (s === "error") return { label: "失敗", cls: "badge-error" };
-      if (unwanted?.has(f.id)) return null;
       return { label: "未取得", cls: "badge-ghost badge-outline" };
     };
 
@@ -310,6 +376,8 @@ export const RoomPage = clientEntry(
       );
       const heldCount = list.filter((f) => held.has(f.id)).length;
       const canExport = isExportSupported() && heldCount > 0;
+      const sel = selectedStats();
+      const overLimit = sel.bytes > MAX_ZIP_BYTES;
       const statusLabel = status === "open"
         ? `接続中 · 参加者 ${peers.length}人`
         : status === "connecting"
@@ -371,6 +439,11 @@ export const RoomPage = clientEntry(
               <span class="text-sm">{exportMsg}</span>
             </div>
           )}
+          {zipMsg && (
+            <div role="alert" class="alert alert-info alert-soft py-2">
+              <span class="text-sm">{zipMsg}</span>
+            </div>
+          )}
 
           <label
             for={FILE_INPUT_ID}
@@ -415,6 +488,35 @@ export const RoomPage = clientEntry(
             ]}
           />
 
+          <div class="flex flex-wrap items-center justify-between gap-3 rounded-box border border-base-300 bg-base-100 p-3">
+            <div class="text-sm">
+              <span class="font-medium">{`選択 ${sel.count} 件`}</span>
+              <span class="text-base-content/60">
+                {` · 合計 ${humanSize(sel.bytes)}`}
+              </span>
+              {overLimit && (
+                <span class="text-error">
+                  {` · 4GB を超えると一括ダウンロードできません`}
+                </span>
+              )}
+            </div>
+            <button
+              type="button"
+              class="btn btn-sm btn-primary"
+              disabled={sel.count === 0 || overLimit || zipping}
+              mix={[on("click", () => void onDownloadZip())]}
+            >
+              {zipping
+                ? (
+                  <>
+                    <span class="loading loading-spinner loading-xs"></span>
+                    作成中…
+                  </>
+                )
+                : `⬇️ まとめてダウンロード (${sel.count})`}
+            </button>
+          </div>
+
           {list.length === 0
             ? (
               <div class="text-center text-base-content/50 py-12">
@@ -424,21 +526,32 @@ export const RoomPage = clientEntry(
             : (
               <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
                 {list.map((f) => {
-                  const isUnwanted = unwanted?.has(f.id) ?? false;
                   const badge = fileBadge(f);
+                  const isHeld = held.has(f.id);
+                  const isSelected = selected.has(f.id);
                   return (
-                    <div
-                      class={`card card-compact bg-base-100 border border-base-300 overflow-hidden ${
-                        isUnwanted ? "opacity-40" : ""
-                      }`}
-                    >
-                      <figure class="aspect-square bg-base-200">
+                    <div class="card card-compact bg-base-100 border border-base-300 overflow-hidden">
+                      <figure class="relative aspect-square bg-base-200">
                         <img
                           src={f.thumbUrl}
                           alt={f.filename}
                           loading="lazy"
                           class="h-full w-full object-cover"
                         />
+                        {isHeld && (
+                          <input
+                            type="checkbox"
+                            class="checkbox checkbox-sm absolute top-2 left-2 bg-base-100"
+                            checked={isSelected}
+                            aria-label="選択"
+                            mix={[
+                              on<HTMLInputElement, "change">(
+                                "change",
+                                () => onToggleSelect(f.id),
+                              ),
+                            ]}
+                          />
+                        )}
                       </figure>
                       <div class="card-body gap-1">
                         <div
@@ -465,15 +578,15 @@ export const RoomPage = clientEntry(
                             </span>
                           )}
                         </div>
-                        <button
-                          type="button"
-                          class={`btn btn-xs ${
-                            isUnwanted ? "btn-ghost" : "btn-outline"
-                          }`}
-                          mix={[on("click", () => onToggleUnwanted(f.id))]}
-                        >
-                          {isUnwanted ? "不要を解除" : "不要"}
-                        </button>
+                        {isHeld && (
+                          <button
+                            type="button"
+                            class="btn btn-xs btn-outline"
+                            mix={[on("click", () => void onDownloadOne(f))]}
+                          >
+                            ⬇️ 保存
+                          </button>
+                        )}
                       </div>
                     </div>
                   );
