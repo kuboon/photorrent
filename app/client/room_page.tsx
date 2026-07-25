@@ -10,9 +10,12 @@
  *
  * Phase 2: file BODIES move peer-to-peer. Seeing a wanted file it lacks, a
  * guest fetches it from a holder over a WebRTC data channel (falling back to
- * the server byte-relay), saves it to OPFS, and announces `have` so it can
- * serve it onward. "不要"-marked files are skipped. Held bodies can be
- * bulk-exported to an external directory.
+ * the server byte-relay), saves it to the active {@link BodyStore}, and
+ * announces `have` so it can serve it onward.
+ *
+ * Two sync modes back the store: "ブラウザ上で同期" (OPFS + per-file/zip
+ * download) and "フォルダを同期" (a real directory via File System Access —
+ * existing media shared, downloads written back, Chromium only).
  *
  * Setup runs on both server and client; browser-only work is gated on
  * `isClientEnv`.
@@ -29,16 +32,20 @@ import type { FileMeta, ServerMsg } from "../server/lib/protocol.ts";
 import type { RtcSignalData } from "./lib/peer.ts";
 import { contentHash } from "./lib/hash.ts";
 import { generateThumbnail } from "./lib/thumbnail.ts";
+import { isAvailable as opfsAvailable } from "./lib/opfs.ts";
 import {
-  getFile,
-  isAvailable as opfsAvailable,
-  listIds,
-  save,
-} from "./lib/opfs.ts";
+  type BodyStore,
+  FolderStore,
+  isFolderSyncSupported,
+  OpfsStore,
+  pickDirectory,
+} from "./lib/body_store.ts";
 import { type ConnStatus, WsClient } from "./lib/ws_client.ts";
 import { type FileState, TransferManager } from "./lib/transfer.ts";
-import { exportAll, isExportSupported } from "./lib/export.ts";
 import { makeZip } from "./lib/zip.ts";
+
+/** Sync mode: OPFS (browser storage) or a real folder (File System Access). */
+type SyncMode = "opfs" | "folder";
 
 /** Classic (non-ZIP64) zip caps sizes/offsets at 32 bits; stay under 4 GB.
  * Below 4 GiB with margin, so the bulk-download zip never needs ZIP64. */
@@ -66,6 +73,8 @@ export interface RoomPageProps {
 
 /** localStorage key for the participant's display name (shared across rooms). */
 const NAME_KEY = "photorrent:name";
+/** localStorage key for the chosen sync mode (shared across rooms). */
+const MODE_KEY = "photorrent:mode";
 
 const isClientEnv = typeof globalThis !== "undefined" &&
   typeof (globalThis as { document?: unknown }).document !== "undefined";
@@ -92,16 +101,20 @@ export const RoomPage = clientEntry(
 
     const files = new Map<string, FileMeta>();
     const holders = new Map<string, Set<string>>();
-    const held = new Set<string>(); // file ids whose body is in my OPFS
+    const held = new Set<string>(); // file ids whose body I hold locally
     const dlState = new Map<string, FileState>(); // downloading | error (transient)
     const selected = new Set<string>(); // file ids checked for download
     let peers: string[] = [];
     let status: ConnStatus = "connecting";
     let uploading = 0;
     let opfsOk = true;
-    let exportMsg: string | null = null;
     let zipMsg: string | null = null;
     let zipping = false;
+
+    let mode: SyncMode = "opfs";
+    let store: BodyStore | null = null;
+    let folderName: string | null = null; // picked directory name (folder mode)
+    let folderMsg: string | null = null; // scan / status message (folder mode)
 
     let peerId = "";
     let myName = "";
@@ -119,23 +132,25 @@ export const RoomPage = clientEntry(
     };
 
     // Fetch a wanted, not-yet-held file from a holder if one is available.
+    // No-op until a store is ready (folder mode: after the user picks a folder).
     const maybeDownload = (id: string) => {
-      if (!transfer) return;
+      if (!transfer || !store) return;
       const file = files.get(id);
       if (!file) return;
       if (file.uploader === peerId || held.has(id)) return;
       if (transfer.isDownloading(id)) return;
       const holder = pickHolder(id);
-      if (holder) transfer.download(id, file.mime, holder);
+      if (holder) transfer.download(id, file.mime, file.filename, holder);
     };
 
     const retryDownloads = () => {
       for (const id of files.keys()) maybeDownload(id);
     };
 
-    // Mark which known files we already have bodies for (from a prior session).
-    const syncHeldFromOpfs = async () => {
-      for (const id of await listIds()) {
+    // Mark which known files we already hold locally (from the active store).
+    const syncHeldFromStore = async () => {
+      if (!store) return;
+      for (const id of await store.listIds()) {
         if (files.has(id)) held.add(id);
       }
       handle.update();
@@ -152,7 +167,7 @@ export const RoomPage = clientEntry(
             holders.set(id, new Set(ps));
           }
           peers = msg.peers;
-          void syncHeldFromOpfs();
+          void syncHeldFromStore();
           break;
         case "added":
           files.set(msg.file.id, msg.file);
@@ -194,7 +209,10 @@ export const RoomPage = clientEntry(
     if (isClientEnv) {
       peerId = crypto.randomUUID();
       myName = localStorage.getItem(NAME_KEY) ?? "";
+      mode = localStorage.getItem(MODE_KEY) === "folder" ? "folder" : "opfs";
       opfsOk = opfsAvailable();
+      // OPFS store is ready immediately; the folder store waits for a pick.
+      if (mode === "opfs") store = new OpfsStore();
       // Defer opening the socket until after the first render: the WsClient
       // reports status synchronously, and calling handle.update() during the
       // setup phase (before the initial render) is not allowed.
@@ -220,6 +238,7 @@ export const RoomPage = clientEntry(
             handle.update();
           },
         );
+        if (store) transfer.setStore(store);
       });
     }
 
@@ -230,7 +249,9 @@ export const RoomPage = clientEntry(
       handle.update();
       try {
         const thumb = await generateThumbnail(file);
-        await save(id, file); // keep our own body locally to serve to peers
+        // Persist our own body locally to serve to peers (OPFS, or written into
+        // the picked folder in folder mode).
+        await store?.save(id, file, file.name);
         held.add(id);
 
         const thumbUrl = `/api/room/${roomId}/thumb?id=${id}`;
@@ -289,7 +310,7 @@ export const RoomPage = clientEntry(
 
     // Save one already-downloaded file to the device.
     const onDownloadOne = async (f: FileMeta) => {
-      const file = await getFile(f.id);
+      const file = await store?.get(f.id);
       if (file) saveBlob(file, f.filename);
     };
 
@@ -304,7 +325,7 @@ export const RoomPage = clientEntry(
       try {
         const entries: { name: string; blob: Blob }[] = [];
         for (const f of items) {
-          const file = await getFile(f.id);
+          const file = await store?.get(f.id);
           if (file) entries.push({ name: f.filename, blob: file });
         }
         const zip = await makeZip(entries);
@@ -319,23 +340,82 @@ export const RoomPage = clientEntry(
       }
     };
 
-    const onExport = async () => {
-      const items = [...files.values()]
-        .filter((f) => held.has(f.id))
-        .map((f) => ({ id: f.id, filename: f.filename }));
-      if (items.length === 0) return;
+    // Switch sync mode. Re-initializing mid-session is fiddly (two live stores),
+    // so persist the choice and reload into a clean state.
+    const onSetMode = (m: SyncMode) => {
+      if (m === mode) return;
       try {
-        exportMsg = "エクスポート中…";
+        localStorage.setItem(MODE_KEY, m);
+      } catch {
+        /* private mode — won't persist, but the reload still applies */
+      }
+      location.reload();
+    };
+
+    // Publish a body we already hold (folder mode: existing folder files) to the
+    // index — upload a thumbnail + `add` if new, else just announce `have`.
+    const publishHeld = async (id: string, file: File): Promise<void> => {
+      held.add(id);
+      if (files.has(id)) {
+        ws?.send({ t: "have", id });
         handle.update();
-        const r = await exportAll(items);
-        exportMsg = `${r.written}件を書き出し・${r.skipped}件スキップ` +
-          (r.failed ? `・${r.failed}件失敗` : "");
+        return;
+      }
+      try {
+        const thumb = await generateThumbnail(file);
+        const thumbUrl = `/api/room/${roomId}/thumb?id=${id}`;
+        const res = await fetch(thumbUrl, {
+          method: "POST",
+          headers: { "content-type": thumb.blob.type || "image/jpeg" },
+          body: thumb.blob,
+        });
+        if (!res.ok) throw new Error(`thumb upload failed: ${res.status}`);
+        const meta: FileMeta = {
+          id,
+          filename: file.name,
+          size: file.size,
+          mime: file.type || "application/octet-stream",
+          width: thumb.width,
+          height: thumb.height,
+          thumbUrl,
+          uploader: peerId,
+          ...(myName.trim() ? { uploaderName: myName.trim() } : {}),
+          createdAt: Date.now(),
+        };
+        files.set(id, meta);
+        ws?.send({ t: "add", file: meta });
       } catch (err) {
-        exportMsg = (err as Error)?.name === "AbortError"
-          ? null
-          : "エクスポートに失敗しました";
+        console.error("[room] publish failed for", file.name, err);
       }
       handle.update();
+    };
+
+    // Folder mode: pick a directory, share its existing media, and route
+    // downloads back into it (read+write, like the CLI).
+    const onPickFolder = async () => {
+      const dir = await pickDirectory();
+      if (!dir) return;
+      folderMsg = "フォルダを読み込み中…";
+      handle.update();
+      const { store: fs, held: existing } = await FolderStore.open(
+        dir,
+        (n) => {
+          folderMsg = `読み込み中: ${n}`;
+          handle.update();
+        },
+      );
+      store = fs;
+      folderName = (dir as unknown as { name?: string }).name ?? "フォルダ";
+      transfer?.setStore(fs);
+      folderMsg = `${existing.length} 件を共有します…`;
+      handle.update();
+      for (const hf of existing) {
+        const f = await fs.get(hf.id);
+        if (f instanceof File) await publishHeld(hf.id, f);
+      }
+      folderMsg = null;
+      handle.update();
+      retryDownloads();
     };
 
     // Persist the participant's display name. The input's `value` prop makes
@@ -374,10 +454,12 @@ export const RoomPage = clientEntry(
       const list = [...files.values()].sort((a, b) =>
         a.createdAt - b.createdAt
       );
-      const heldCount = list.filter((f) => held.has(f.id)).length;
-      const canExport = isExportSupported() && heldCount > 0;
       const sel = selectedStats();
       const overLimit = sel.bytes > MAX_ZIP_BYTES;
+      const folderSupported = isFolderSyncSupported();
+      // In folder mode, the app is usable only once a folder is chosen.
+      const folderReady = mode === "folder" && store !== null;
+      const canUpload = mode === "opfs" || folderReady;
       const statusLabel = status === "open"
         ? `接続中 · 参加者 ${peers.length}人`
         : status === "connecting"
@@ -417,62 +499,107 @@ export const RoomPage = clientEntry(
                 />
               </label>
               <span class={`badge ${statusBadge} badge-sm`}>{statusLabel}</span>
-              {!opfsOk && (
+              {mode === "opfs" && !opfsOk && (
                 <span class="badge badge-outline badge-warning badge-sm">
                   OPFS 非対応
                 </span>
               )}
-              {canExport && (
-                <button
-                  type="button"
-                  class="btn btn-sm btn-outline"
-                  mix={[on("click", () => void onExport())]}
-                >
-                  ⬇️ 端末に保存 ({heldCount})
-                </button>
-              )}
             </div>
           </div>
 
-          {exportMsg && (
-            <div role="alert" class="alert alert-info alert-soft py-2">
-              <span class="text-sm">{exportMsg}</span>
+          <div class="tabs tabs-boxed w-fit">
+            <button
+              type="button"
+              class={`tab ${mode === "opfs" ? "tab-active" : ""}`}
+              mix={[on("click", () => onSetMode("opfs"))]}
+            >
+              ブラウザ上で同期
+            </button>
+            <button
+              type="button"
+              class={`tab ${mode === "folder" ? "tab-active" : ""}`}
+              mix={[on("click", () => onSetMode("folder"))]}
+            >
+              フォルダを同期
+            </button>
+          </div>
+
+          {mode === "folder" && (
+            <div class="rounded-box border border-base-300 bg-base-100 p-3 space-y-2">
+              {!folderSupported
+                ? (
+                  <p class="text-sm text-base-content/70">
+                    このブラウザはフォルダ同期に非対応です（Chrome / Edge などの
+                    Chromium 系で利用できます）。他のブラウザでは
+                    「ブラウザ上で同期」をお使いください。
+                  </p>
+                )
+                : store === null
+                ? (
+                  <div class="flex flex-wrap items-center gap-3">
+                    <button
+                      type="button"
+                      class="btn btn-sm btn-primary"
+                      mix={[on("click", () => void onPickFolder())]}
+                    >
+                      📁 フォルダを選択
+                    </button>
+                    <span class="text-sm text-base-content/60">
+                      選んだフォルダ内のメディアを共有し、受信したファイルも
+                      そのフォルダに保存します。
+                    </span>
+                  </div>
+                )
+                : (
+                  <p class="text-sm">
+                    <span class="font-medium">📁 {folderName}</span>
+                    <span class="text-base-content/60">
+                      {" 同期中 — 受信したファイルはこのフォルダに保存されます"}
+                    </span>
+                  </p>
+                )}
+              {folderMsg && (
+                <p class="text-sm text-base-content/60">{folderMsg}</p>
+              )}
             </div>
           )}
+
           {zipMsg && (
             <div role="alert" class="alert alert-info alert-soft py-2">
               <span class="text-sm">{zipMsg}</span>
             </div>
           )}
 
-          <label
-            for={FILE_INPUT_ID}
-            class="flex flex-col items-center justify-center gap-2 rounded-box border-2 border-dashed border-base-300 bg-base-200/40 p-8 text-center cursor-pointer hover:border-primary transition-colors"
-            mix={[
-              on<HTMLElement, "dragover">(
-                "dragover",
-                (e) => e.preventDefault(),
-              ),
-              on<HTMLElement, "drop">("drop", (e) => {
-                e.preventDefault();
-                handleFiles(e.dataTransfer?.files);
-              }),
-            ]}
-          >
-            <span class="text-4xl">⬆️</span>
-            <span class="font-medium">
-              写真・動画をドロップ、またはクリックして選択
-            </span>
-            <span class="text-sm text-base-content/50">
-              アップしたものは参加者全員に共有されます
-            </span>
-            {uploading > 0 && (
-              <span class="badge badge-primary badge-sm gap-1">
-                <span class="loading loading-spinner loading-xs"></span>
-                アップロード中 {uploading}
+          {canUpload && (
+            <label
+              for={FILE_INPUT_ID}
+              class="flex flex-col items-center justify-center gap-2 rounded-box border-2 border-dashed border-base-300 bg-base-200/40 p-8 text-center cursor-pointer hover:border-primary transition-colors"
+              mix={[
+                on<HTMLElement, "dragover">(
+                  "dragover",
+                  (e) => e.preventDefault(),
+                ),
+                on<HTMLElement, "drop">("drop", (e) => {
+                  e.preventDefault();
+                  handleFiles(e.dataTransfer?.files);
+                }),
+              ]}
+            >
+              <span class="text-4xl">⬆️</span>
+              <span class="font-medium">
+                写真・動画をドロップ、またはクリックして選択
               </span>
-            )}
-          </label>
+              <span class="text-sm text-base-content/50">
+                アップしたものは参加者全員に共有されます
+              </span>
+              {uploading > 0 && (
+                <span class="badge badge-primary badge-sm gap-1">
+                  <span class="loading loading-spinner loading-xs"></span>
+                  アップロード中 {uploading}
+                </span>
+              )}
+            </label>
+          )}
           <input
             id={FILE_INPUT_ID}
             type="file"
@@ -488,34 +615,36 @@ export const RoomPage = clientEntry(
             ]}
           />
 
-          <div class="flex flex-wrap items-center justify-between gap-3 rounded-box border border-base-300 bg-base-100 p-3">
-            <div class="text-sm">
-              <span class="font-medium">{`選択 ${sel.count} 件`}</span>
-              <span class="text-base-content/60">
-                {` · 合計 ${humanSize(sel.bytes)}`}
-              </span>
-              {overLimit && (
-                <span class="text-error">
-                  {` · 4GB を超えると一括ダウンロードできません`}
+          {mode === "opfs" && (
+            <div class="flex flex-wrap items-center justify-between gap-3 rounded-box border border-base-300 bg-base-100 p-3">
+              <div class="text-sm">
+                <span class="font-medium">{`選択 ${sel.count} 件`}</span>
+                <span class="text-base-content/60">
+                  {` · 合計 ${humanSize(sel.bytes)}`}
                 </span>
-              )}
+                {overLimit && (
+                  <span class="text-error">
+                    {` · 4GB を超えると一括ダウンロードできません`}
+                  </span>
+                )}
+              </div>
+              <button
+                type="button"
+                class="btn btn-sm btn-primary"
+                disabled={sel.count === 0 || overLimit || zipping}
+                mix={[on("click", () => void onDownloadZip())]}
+              >
+                {zipping
+                  ? (
+                    <>
+                      <span class="loading loading-spinner loading-xs"></span>
+                      作成中…
+                    </>
+                  )
+                  : `⬇️ まとめてダウンロード (${sel.count})`}
+              </button>
             </div>
-            <button
-              type="button"
-              class="btn btn-sm btn-primary"
-              disabled={sel.count === 0 || overLimit || zipping}
-              mix={[on("click", () => void onDownloadZip())]}
-            >
-              {zipping
-                ? (
-                  <>
-                    <span class="loading loading-spinner loading-xs"></span>
-                    作成中…
-                  </>
-                )
-                : `⬇️ まとめてダウンロード (${sel.count})`}
-            </button>
-          </div>
+          )}
 
           {list.length === 0
             ? (
@@ -538,7 +667,7 @@ export const RoomPage = clientEntry(
                           loading="lazy"
                           class="h-full w-full object-cover"
                         />
-                        {isHeld && (
+                        {mode === "opfs" && isHeld && (
                           <input
                             type="checkbox"
                             class="checkbox checkbox-sm absolute top-2 left-2 bg-base-100"
@@ -578,7 +707,7 @@ export const RoomPage = clientEntry(
                             </span>
                           )}
                         </div>
-                        {isHeld && (
+                        {mode === "opfs" && isHeld && (
                           <button
                             type="button"
                             class="btn btn-xs btn-outline"

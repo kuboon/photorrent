@@ -21,7 +21,7 @@ import {
   RtcConnection,
   type RtcSignalData,
 } from "./peer.ts";
-import { getFile, save } from "./opfs.ts";
+import type { BodyStore } from "./body_store.ts";
 
 export type FileState = "downloading" | "have" | "error";
 
@@ -32,6 +32,7 @@ const RTC_OPEN_TIMEOUT = 8000;
 interface Download {
   id: string;
   mime: string;
+  name: string;
   holder: string;
   chunks: ArrayBuffer[];
   receiving: boolean;
@@ -55,10 +56,17 @@ export class TransferManager {
   private relays = new Map<string, RelaySink>(); // tid → relay sink (both roles)
   private downloads = new Map<string, Download>(); // fileId → in-flight download
 
+  #store: BodyStore | null = null;
+
   constructor(
     private io: TransferIO,
     private onState: (fileId: string, state: FileState) => void,
   ) {}
+
+  /** Set (or swap) the active body store. Downloads/serving no-op until set. */
+  setStore(store: BodyStore): void {
+    this.#store = store;
+  }
 
   /** Whether a download for this file is already in flight. */
   isDownloading(fileId: string): boolean {
@@ -67,12 +75,18 @@ export class TransferManager {
 
   // --- requester side -----------------------------------------------------
 
-  /** Start downloading `fileId` (mime for the reassembled Blob) from `holder`. */
-  download(fileId: string, mime: string, holder: string): void {
+  /** Start downloading `fileId` (mime/name for the saved body) from `holder`. */
+  download(
+    fileId: string,
+    mime: string,
+    filename: string,
+    holder: string,
+  ): void {
     if (this.downloads.has(fileId) || holder === this.io.myPeerId) return;
     const dl: Download = {
       id: fileId,
       mime,
+      name: filename,
       holder,
       chunks: [],
       receiving: false,
@@ -128,6 +142,7 @@ export class TransferManager {
       if (msg.c === "begin") {
         dl.receiving = true;
         dl.mime = (msg.mime as string) || dl.mime;
+        dl.name = (msg.name as string) || dl.name;
         dl.chunks = [];
       } else if (msg.c === "end") {
         void this.finish(dl);
@@ -142,7 +157,7 @@ export class TransferManager {
     if (dl.done) return;
     dl.done = true;
     const blob = new Blob(dl.chunks, { type: dl.mime });
-    const ok = await save(dl.id, blob);
+    const ok = await (this.#store?.save(dl.id, blob, dl.name) ?? false);
     this.cleanupDownload(dl);
     if (ok) {
       this.io.announceHave(dl.id);
@@ -176,17 +191,18 @@ export class TransferManager {
     sink.onJson = async (msg) => {
       if (msg.c !== "req") return;
       const id = msg.id as string;
-      const file = await getFile(id);
+      const file = this.#store ? await this.#store.get(id) : null;
       if (!file) {
         sink.sendJson({ c: "err", id, message: "not held" });
         return;
       }
+      const name = file instanceof File ? file.name : id;
       sink.sendJson({
         c: "begin",
         id,
         size: file.size,
         mime: file.type,
-        name: file.name,
+        name,
       });
       await streamFile(sink, file);
       sink.sendJson({ c: "end", id });
@@ -227,7 +243,7 @@ export class TransferManager {
   }
 }
 
-async function streamFile(sink: DataSink, file: File): Promise<void> {
+async function streamFile(sink: DataSink, file: Blob): Promise<void> {
   const buf = await file.arrayBuffer();
   let off = 0;
   while (off < buf.byteLength) {
