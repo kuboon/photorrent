@@ -491,6 +491,7 @@
       },
       "app/client": {
         "dependencies": [
+          "jsr:@std/assert@^1.0.19",
           "npm:@remix-run/ui@~0.1.1"
         ]
       },

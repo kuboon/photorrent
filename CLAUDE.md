@@ -15,7 +15,8 @@ Deno + Remix v3 (`@remix-run/fetch-router`) 実装。sibling の
   不能時の）バイト中継フォールバックのみを担う。
 - サーバは各ファイルの **index（サムネ・サイズ等のメタデータ）**
   だけを保持する。
-- 参加者が「不要」マークしたものは自分の端末にはダウンロードされない（ローカル設定）。
+- 取得済みの本体は各カードのチェックボックスで選び、個別／まとめて（zip）
+  端末へダウンロードできる（選択合計が 4GB を超えると一括 zip は不可）。
 - ダウンロード/自分のアップした本体は OPFS
   に保存され、後でまとめて外部ファイルシステムへ
   エクスポートできる（対象に既存のものは除外）。
@@ -27,11 +28,12 @@ Deno + Remix v3 (`@remix-run/fetch-router`) 実装。sibling の
   自分の本体を OPFS 保存 → サムネを POST → WS で `add` 送信。他タブに index
   イベントが届きギャラリーがライブ更新される。
 - **Phase 2 — 本体転送（完了）**: ファイル本体を WebRTC データチャネルで P2P
-  配布する。参加者は「欲しい（＝不要でない）が未取得」のファイルを holder
-  から自動ダウンロードし、OPFS に保存して `have` を通知（以後は自分も配信元に
-  なる）。P2P が繋がらない場合はサーバ WS の `relay` でチャンクを中継する
-  フォールバックに切り替わる。OPFS の本体は外部ファイルシステムへ一括
-  エクスポートできる（対象ディレクトリに既存の名前はスキップ）。 holder
+  配布する。参加者は未取得のファイルを holder から自動ダウンロードし、OPFS
+  に保存して `have` を通知（以後は自分も配信元に なる）。P2P
+  が繋がらない場合はサーバ WS の `relay` でチャンクを中継する
+  フォールバックに切り替わる。取得済みの本体は各カードのチェックボックスで
+  選び、個別／まとめて（自前 STORE zip）端末へダウンロードできる。Chromium では
+  外部ディレクトリへの一括エクスポート（既存名はスキップ）も可能。 holder
   追跡（誰がどのファイルを持つか）はサーバが行い `holders` で配信する。
 
 ## 構造
@@ -56,9 +58,9 @@ Deno + Remix v3 (`@remix-run/fetch-router`) 実装。sibling の
 - `app/client/` — ブラウザ TS/TSX（`Deno.bundle` で `app/bundled/` に出力）
   - `room_page.tsx` — 部屋ページの唯一の
     `clientEntry`（ドロップゾーン＋ライブギャラリー＋自動DL＋エクスポート）
-  - `lib/` — `ws_client` / `thumbnail` / `hash` / `opfs` / `unwanted` /
-    `peer`（WebRTC＋relay チャネル）/ `transfer`（本体転送の管理）/
-    `export`（外部 FS への書き出し）
+  - `lib/` — `ws_client` / `thumbnail` / `hash` / `opfs` / `peer`（WebRTC＋relay
+    チャネル）/ `transfer`（本体転送の管理）/ `export`（外部 FS への書き出し）/
+    `zip`（自前 STORE zip 生成）
 - `app/bundler/` — `Deno.bundle`（JS）＋ Tailwind v4（CSS）ビルド
 - `app/assets/style.css` — Tailwind + daisyUI 入力
 - `app/worker/` — Cloudflare Workers ターゲット（Deno 版と同じ shared
