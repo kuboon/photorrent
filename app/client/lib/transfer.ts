@@ -63,8 +63,9 @@ export class TransferManager {
     private onState: (fileId: string, state: FileState) => void,
   ) {}
 
-  /** Set (or swap) the active body store. Downloads/serving no-op until set. */
-  setStore(store: BodyStore): void {
+  /** Set, swap, or clear the active body store. Downloads/serving no-op when
+   * cleared (folder mode before a directory is picked). */
+  setStore(store: BodyStore | null): void {
     this.#store = store;
   }
 
