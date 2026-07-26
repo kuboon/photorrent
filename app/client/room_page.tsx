@@ -209,14 +209,18 @@ export const RoomPage = clientEntry(
     if (isClientEnv) {
       peerId = crypto.randomUUID();
       myName = localStorage.getItem(NAME_KEY) ?? "";
-      mode = localStorage.getItem(MODE_KEY) === "folder" ? "folder" : "opfs";
       opfsOk = opfsAvailable();
-      // OPFS store is ready immediately; the folder store waits for a pick.
-      if (mode === "opfs") store = new OpfsStore();
-      // Defer opening the socket until after the first render: the WsClient
-      // reports status synchronously, and calling handle.update() during the
-      // setup phase (before the initial render) is not allowed.
+      // IMPORTANT: do NOT read the persisted mode here. The server always SSRs
+      // the default ("opfs") layout, and the first client render must match it
+      // exactly or hydration mismatches (structural diff → broken event
+      // wiring). Apply the stored mode after hydration, in the microtask below.
+      // Defer opening the socket until after the first render too: the WsClient
+      // reports status synchronously, and handle.update() during the setup
+      // phase (before the initial render) is not allowed.
       queueMicrotask(() => {
+        mode = localStorage.getItem(MODE_KEY) === "folder" ? "folder" : "opfs";
+        // OPFS store is ready immediately; the folder store waits for a pick.
+        if (mode === "opfs") store = new OpfsStore();
         ws = new WsClient(wsUrl(), peerId, onServerMsg, (s) => {
           status = s;
           handle.update();
@@ -239,6 +243,8 @@ export const RoomPage = clientEntry(
           },
         );
         if (store) transfer.setStore(store);
+        // Reflect the applied mode now that we're past hydration.
+        handle.update();
       });
     }
 
@@ -340,16 +346,30 @@ export const RoomPage = clientEntry(
       }
     };
 
-    // Switch sync mode. Re-initializing mid-session is fiddly (two live stores),
-    // so persist the choice and reload into a clean state.
+    // Switch sync mode in place (no reload — a reload just re-triggers the
+    // SSR→hydrate path). Reset per-mode state and swap the active store.
     const onSetMode = (m: SyncMode) => {
       if (m === mode) return;
+      mode = m;
       try {
         localStorage.setItem(MODE_KEY, m);
       } catch {
-        /* private mode — won't persist, but the reload still applies */
+        /* private mode — won't persist across reloads */
       }
-      location.reload();
+      selected.clear();
+      held.clear();
+      if (m === "opfs") {
+        store = new OpfsStore();
+        transfer?.setStore(store);
+        void syncHeldFromStore();
+      } else {
+        // Folder mode needs a fresh pick; stop serving/downloading until then.
+        store = null;
+        folderName = null;
+        folderMsg = null;
+        transfer?.setStore(null);
+      }
+      handle.update();
     };
 
     // Publish a body we already hold (folder mode: existing folder files) to the
