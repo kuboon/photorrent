@@ -607,7 +607,7 @@ export const RoomPage = clientEntry(
             >
               <span class="text-4xl">⬆️</span>
               <span class="font-medium">
-                写真・動画をドロップ、またはクリックして選択
+                ファイルをドロップ、またはクリックして選択
               </span>
               <span class="text-sm text-base-content/50">
                 アップしたものは参加者全員に共有されます
@@ -623,7 +623,6 @@ export const RoomPage = clientEntry(
           <input
             id={FILE_INPUT_ID}
             type="file"
-            accept="image/*,video/*"
             multiple
             class="hidden"
             mix={[

@@ -1,8 +1,11 @@
 /**
- * Local media handling: scanning the current directory for shareable files,
+ * Local file handling: scanning the current directory for shareable files,
  * content-addressing them (SHA-256, matching the web client's `hash.ts`), and
  * the on-disk store of bodies the CLI can serve — both the files it shares from
  * cwd and the ones it downloads into `./shared` (which it then re-seeds).
+ *
+ * Any regular file is shareable (photos, videos, zips, documents, …); only
+ * hidden/dot files are skipped.
  */
 
 import { basename, extname, join } from "@std/path";
@@ -18,26 +21,6 @@ export interface OwnedFile {
   size: number;
 }
 
-/** Extensions we treat as shareable media. */
-const MEDIA_EXTS = new Set([
-  ".jpg",
-  ".jpeg",
-  ".png",
-  ".gif",
-  ".webp",
-  ".avif",
-  ".heic",
-  ".heif",
-  ".bmp",
-  ".tiff",
-  ".mp4",
-  ".mov",
-  ".webm",
-  ".mkv",
-  ".avi",
-  ".m4v",
-]);
-
 /** Directory (relative to cwd) where downloaded bodies are written. */
 export const SHARED_DIR = "shared";
 
@@ -47,8 +30,9 @@ export function mimeFor(filename: string): string {
   return contentType(ext) ?? "application/octet-stream";
 }
 
-function isMedia(filename: string): boolean {
-  return MEDIA_EXTS.has(extname(filename).toLowerCase());
+/** Skip hidden/dot files (e.g. .DS_Store, partial downloads); share the rest. */
+function isShareable(filename: string): boolean {
+  return !filename.startsWith(".");
 }
 
 /** SHA-256 (lowercase hex) of a file's bytes. */
@@ -63,18 +47,18 @@ export async function hashFile(path: string): Promise<string> {
 }
 
 /**
- * Scan the top level of `dir` for media files and content-address them.
- * The `shared/` download directory is skipped (those bodies arrive already
- * indexed). Progress is reported per file since hashing large videos is slow.
+ * Scan the top level of `dir` for shareable files and content-address them.
+ * The `shared/` download directory (a subdirectory) is skipped, as are hidden
+ * files. Progress is reported per file since hashing large files is slow.
  */
-export async function scanMedia(
+export async function scanFiles(
   dir: string,
   onProgress?: (filename: string) => void,
 ): Promise<OwnedFile[]> {
   const owned: OwnedFile[] = [];
   for await (const entry of Deno.readDir(dir)) {
     if (!entry.isFile) continue;
-    if (!isMedia(entry.name)) continue;
+    if (!isShareable(entry.name)) continue;
     const path = join(dir, entry.name);
     onProgress?.(entry.name);
     const stat = await Deno.stat(path);

@@ -18,7 +18,7 @@ import {
   parseRoomUrl,
   type RoomEndpoints,
 } from "./lib/room_url.ts";
-import { type OwnedFile, scanMedia, SHARED_DIR } from "./lib/media.ts";
+import { type OwnedFile, scanFiles, SHARED_DIR } from "./lib/media.ts";
 import { placeholderThumb } from "./lib/thumb.ts";
 import { RelayTransfer } from "./lib/transfer.ts";
 
@@ -81,8 +81,8 @@ async function main(): Promise<void> {
   const sharedDir = `${cwd}/${SHARED_DIR}`;
   const peerId = crypto.randomUUID();
 
-  log(`メディアを走査中 (${cwd}) …`);
-  const scanned = await scanMedia(cwd, (n) => log(`  hashing ${n}`));
+  log(`ファイルを走査中 (${cwd}) …`);
+  const scanned = await scanFiles(cwd, (n) => log(`  hashing ${n}`));
   const owned = new Map<string, OwnedFile>(scanned.map((f) => [f.id, f]));
   log(`共有対象: ${owned.size} ファイル`);
 
@@ -213,7 +213,7 @@ class Session {
   }
 
   async #uploadNew(file: OwnedFile): Promise<void> {
-    const thumb = placeholderThumb(file.mime);
+    const thumb = placeholderThumb(file.mime, file.filename);
     try {
       const res = await fetch(this.room.thumbUrl(file.id), {
         method: "POST",

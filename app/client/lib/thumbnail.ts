@@ -112,13 +112,39 @@ function fromVideo(file: File): Promise<Thumbnail> {
   });
 }
 
-/** A tiny neutral SVG thumbnail used when real generation fails. */
+/** An emoji icon representing a file's kind, from its MIME type. */
+function iconForMime(mime: string): string {
+  if (mime.startsWith("image/")) return "🖼️";
+  if (mime.startsWith("video/")) return "🎬";
+  if (mime.startsWith("audio/")) return "🎵";
+  if (mime === "application/pdf") return "📕";
+  if (/zip|tar|gzip|compressed|7z|rar|x-xz|zstd/.test(mime)) return "🗜️";
+  return "📄";
+}
+
+function esc(s: string): string {
+  return s.replace(
+    /[&<>]/g,
+    (c) => (c === "&" ? "&amp;" : c === "<" ? "&lt;" : "&gt;"),
+  );
+}
+
+/** A tiny neutral SVG thumbnail: a type icon plus the file's extension. Used
+ * for non-media files and when real thumbnail generation fails. */
 function placeholder(file: File): Thumbnail {
-  const icon = file.type.startsWith("video/") ? "🎬" : "🖼️";
+  const icon = iconForMime(file.type);
+  const dot = file.name.lastIndexOf(".");
+  const ext = dot > 0 ? file.name.slice(dot + 1).toUpperCase().slice(0, 5) : "";
+  const label = ext
+    ? `<text x="50%" y="72%" font-size="40" fill="#6b7280" text-anchor="middle" font-family="sans-serif">${
+      esc(ext)
+    }</text>`
+    : "";
   const svg =
     `<svg xmlns="http://www.w3.org/2000/svg" width="${MAX_EDGE}" height="${MAX_EDGE}">` +
     `<rect width="100%" height="100%" fill="#e5e7eb"/>` +
-    `<text x="50%" y="50%" font-size="96" text-anchor="middle" dominant-baseline="central">${icon}</text>` +
+    `<text x="50%" y="46%" font-size="96" text-anchor="middle" dominant-baseline="central">${icon}</text>` +
+    label +
     `</svg>`;
   const blob = new Blob([svg], { type: "image/svg+xml" });
   return { blob, width: MAX_EDGE, height: MAX_EDGE };

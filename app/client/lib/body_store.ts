@@ -4,7 +4,7 @@
  * - {@link OpfsStore} ("ブラウザ上で同期"): bodies live in OPFS, keyed by content
  *   id. Works in every browser; downloads are saved/exported via the gallery.
  * - {@link FolderStore} ("フォルダを同期"): bodies live in a real directory the
- *   user picks (File System Access API, Chromium only). Existing media in the
+ *   user picks (File System Access API, Chromium only). Existing files in the
  *   folder are shared, and downloaded bodies are written back into it — the same
  *   read+write model as the CLI (cwd = share source, downloads re-seeded).
  *
@@ -53,57 +53,9 @@ export class OpfsStore implements BodyStore {
 
 // --- Folder (File System Access API) backend ------------------------------
 
-/** Media extensions the folder scan treats as shareable (mirrors the CLI). */
-const MEDIA_EXTS = new Set([
-  "jpg",
-  "jpeg",
-  "png",
-  "gif",
-  "webp",
-  "avif",
-  "heic",
-  "heif",
-  "bmp",
-  "tiff",
-  "mp4",
-  "mov",
-  "webm",
-  "mkv",
-  "avi",
-  "m4v",
-]);
-
-const MIME_BY_EXT: Record<string, string> = {
-  jpg: "image/jpeg",
-  jpeg: "image/jpeg",
-  png: "image/png",
-  gif: "image/gif",
-  webp: "image/webp",
-  avif: "image/avif",
-  heic: "image/heic",
-  heif: "image/heif",
-  bmp: "image/bmp",
-  tiff: "image/tiff",
-  mp4: "video/mp4",
-  mov: "video/quicktime",
-  webm: "video/webm",
-  mkv: "video/x-matroska",
-  avi: "video/x-msvideo",
-  m4v: "video/x-m4v",
-};
-
-function ext(name: string): string {
-  const i = name.lastIndexOf(".");
-  return i >= 0 ? name.slice(i + 1).toLowerCase() : "";
-}
-
-function isMedia(name: string): boolean {
-  return MEDIA_EXTS.has(ext(name));
-}
-
-/** Best-effort MIME from extension for folder files. */
-function mimeFor(name: string): string {
-  return MIME_BY_EXT[ext(name)] ?? "application/octet-stream";
+/** Skip hidden/dot files (e.g. .DS_Store); any other file is shareable. */
+function isShareable(name: string): boolean {
+  return !name.startsWith(".");
 }
 
 /** Whether this browser can pick a directory (Chromium family). */
@@ -158,8 +110,8 @@ export class FolderStore implements BodyStore {
   }
 
   /**
-   * Open a store over `dir`, scanning existing media. Returns the store and the
-   * list of already-held files (for the caller to publish/share).
+   * Open a store over `dir`, scanning existing (non-hidden) files. Returns the
+   * store and the list of already-held files (for the caller to publish/share).
    */
   static async open(
     dir: FsDirHandle,
@@ -168,7 +120,7 @@ export class FolderStore implements BodyStore {
     const store = new FolderStore(dir);
     const held: HeldFile[] = [];
     for await (const [name, handle] of dir.entries()) {
-      if (handle.kind !== "file" || !isMedia(name)) continue;
+      if (handle.kind !== "file" || !isShareable(name)) continue;
       onProgress?.(name);
       const fh = await dir.getFileHandle(name);
       const file = await fh.getFile();
@@ -178,7 +130,7 @@ export class FolderStore implements BodyStore {
         id,
         name,
         size: file.size,
-        mime: file.type || mimeFor(name),
+        mime: file.type || "application/octet-stream",
       });
     }
     return { store, held };
