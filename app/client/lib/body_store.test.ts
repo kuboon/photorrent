@@ -59,20 +59,22 @@ class FakeDirHandle {
 // deno-lint-ignore no-explicit-any
 const asDir = (d: FakeDirHandle) => d as any;
 
-Deno.test("FolderStore.open scans and content-addresses existing media", async () => {
+Deno.test("FolderStore.open scans all non-hidden files, skips dotfiles", async () => {
   const dir = new FakeDirHandle();
   const a = new TextEncoder().encode("photo-a");
-  const b = new TextEncoder().encode("photo-b");
+  const z = new TextEncoder().encode("archive-bytes");
   dir.add("a.jpg", a);
-  dir.add("b.jpg", b);
-  dir.add("notes.txt", new TextEncoder().encode("skip me")); // non-media
+  dir.add("bundle.zip", z); // non-media is now shared too
+  dir.add(".DS_Store", new TextEncoder().encode("junk")); // hidden → skipped
 
   const { store, held } = await FolderStore.open(asDir(dir));
-  assertEquals(held.length, 2); // txt skipped
+  assertEquals(held.length, 2); // jpg + zip, dotfile skipped
   const idA = await contentHash(new Blob([a]));
+  const idZ = await contentHash(new Blob([z]));
   assert(held.some((h) => h.id === idA && h.name === "a.jpg"));
-  assertEquals((await store.get(idA))?.size, a.length);
-  assert(await store.has(idA));
+  assert(held.some((h) => h.id === idZ && h.name === "bundle.zip"));
+  assertEquals((await store.get(idZ))?.size, z.length);
+  assert(await store.has(idZ));
 });
 
 Deno.test("FolderStore.save writes a new body and can read it back", async () => {
