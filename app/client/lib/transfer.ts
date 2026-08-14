@@ -37,6 +37,8 @@ interface Download {
   chunks: ArrayBuffer[];
   receiving: boolean;
   done: boolean;
+  received: number; // bytes received so far (progress)
+  total: number; // expected total bytes (from `begin`), 0 until known
   tid?: string; // active RTC transfer id
   relayTid?: string; // active relay transfer id
   conn?: RtcConnection;
@@ -61,6 +63,12 @@ export class TransferManager {
   constructor(
     private io: TransferIO,
     private onState: (fileId: string, state: FileState) => void,
+    /** Download progress (received/total bytes) for the requested file. */
+    private onProgress: (
+      fileId: string,
+      received: number,
+      total: number,
+    ) => void = () => {},
   ) {}
 
   /** Set, swap, or clear the active body store. Downloads/serving no-op when
@@ -92,6 +100,8 @@ export class TransferManager {
       chunks: [],
       receiving: false,
       done: false,
+      received: 0,
+      total: 0,
     };
     this.downloads.set(fileId, dl);
     this.onState(fileId, "downloading");
@@ -144,6 +154,8 @@ export class TransferManager {
         dl.receiving = true;
         dl.mime = (msg.mime as string) || dl.mime;
         dl.name = (msg.name as string) || dl.name;
+        dl.total = typeof msg.size === "number" ? msg.size : 0;
+        dl.received = 0;
         dl.chunks = [];
       } else if (msg.c === "end") {
         void this.finish(dl);
@@ -151,7 +163,11 @@ export class TransferManager {
         this.fail(dl);
       }
     };
-    sink.onBytes = (buf) => dl.chunks.push(buf);
+    sink.onBytes = (buf) => {
+      dl.chunks.push(buf);
+      dl.received += buf.byteLength;
+      this.onProgress(dl.id, dl.received, dl.total);
+    };
   }
 
   private async finish(dl: Download): Promise<void> {

@@ -51,6 +51,10 @@ type SyncMode = "opfs" | "folder";
  * Below 4 GiB with margin, so the bulk-download zip never needs ZIP64. */
 const MAX_ZIP_BYTES = 4_000_000_000;
 
+/** Files larger than this are not auto-downloaded; the user fetches them by
+ * hand (a "取得" button), to avoid pulling big files onto phones unbidden. */
+const MAX_AUTO_BYTES = 10 * 1024 * 1024;
+
 /** Trigger a browser "save as" for a Blob via a transient object URL. */
 function saveBlob(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);
@@ -103,6 +107,7 @@ export const RoomPage = clientEntry(
     const holders = new Map<string, Set<string>>();
     const held = new Set<string>(); // file ids whose body I hold locally
     const dlState = new Map<string, FileState>(); // downloading | error (transient)
+    const progress = new Map<string, number>(); // fileId → download percent (0-100)
     const selected = new Set<string>(); // file ids checked for download
     let peers: string[] = [];
     let status: ConnStatus = "connecting";
@@ -131,16 +136,27 @@ export const RoomPage = clientEntry(
       return null;
     };
 
-    // Fetch a wanted, not-yet-held file from a holder if one is available.
-    // No-op until a store is ready (folder mode: after the user picks a folder).
-    const maybeDownload = (id: string) => {
+    // Start a download from a holder if one is available. No-op until a store
+    // is ready (folder mode: after a folder is picked). `force` bypasses the
+    // auto-download size cap (used by the manual "取得" button).
+    const startDownload = (id: string, force: boolean) => {
       if (!transfer || !store) return;
       const file = files.get(id);
       if (!file) return;
       if (file.uploader === peerId || held.has(id)) return;
       if (transfer.isDownloading(id)) return;
+      if (!force && file.size > MAX_AUTO_BYTES) return; // large: manual only
       const holder = pickHolder(id);
       if (holder) transfer.download(id, file.mime, file.filename, holder);
+    };
+
+    // Auto-download path (respects the size cap).
+    const maybeDownload = (id: string) => startDownload(id, false);
+
+    // Manual fetch (from the per-card "取得" button) — ignores the size cap.
+    const onFetch = (id: string) => {
+      startDownload(id, true);
+      handle.update();
     };
 
     const retryDownloads = () => {
@@ -236,9 +252,18 @@ export const RoomPage = clientEntry(
             if (state === "have") {
               held.add(fileId);
               dlState.delete(fileId);
+              progress.delete(fileId);
             } else {
               dlState.set(fileId, state);
+              if (state === "error") progress.delete(fileId);
             }
+            handle.update();
+          },
+          (fileId, received, total) => {
+            // Throttle re-renders to whole-percent changes.
+            const pct = total > 0 ? Math.floor((received / total) * 100) : 0;
+            if (progress.get(fileId) === pct) return;
+            progress.set(fileId, pct);
             handle.update();
           },
         );
@@ -299,6 +324,22 @@ export const RoomPage = clientEntry(
     const onToggleSelect = (id: string) => {
       if (selected.has(id)) selected.delete(id);
       else selected.add(id);
+      handle.update();
+    };
+
+    // Select every held file.
+    const onSelectAll = () => {
+      for (const f of files.values()) if (held.has(f.id)) selected.add(f.id);
+      handle.update();
+    };
+
+    // Invert the selection across held files.
+    const onInvertSelection = () => {
+      for (const f of files.values()) {
+        if (!held.has(f.id)) continue;
+        if (selected.has(f.id)) selected.delete(f.id);
+        else selected.add(f.id);
+      }
       handle.update();
     };
 
@@ -464,9 +505,18 @@ export const RoomPage = clientEntry(
       if (held.has(f.id)) return { label: "同期済み", cls: "badge-success" };
       const s = dlState.get(f.id);
       if (s === "downloading") {
-        return { label: "受信中", cls: "badge-info", spin: true };
+        const pct = progress.get(f.id);
+        return {
+          label: pct != null ? `受信中 ${pct}%` : "受信中",
+          cls: "badge-info",
+          spin: true,
+        };
       }
       if (s === "error") return { label: "失敗", cls: "badge-error" };
+      // Large files aren't auto-fetched — the card shows a 取得 button instead.
+      if (f.size > MAX_AUTO_BYTES) {
+        return { label: "未取得（大）", cls: "badge-ghost badge-outline" };
+      }
       return { label: "未取得", cls: "badge-ghost badge-outline" };
     };
 
@@ -476,6 +526,7 @@ export const RoomPage = clientEntry(
       );
       const sel = selectedStats();
       const overLimit = sel.bytes > MAX_ZIP_BYTES;
+      const heldCount = list.filter((f) => held.has(f.id)).length;
       const folderSupported = isFolderSyncSupported();
       // In folder mode, the app is usable only once a folder is chosen.
       const folderReady = mode === "folder" && store !== null;
@@ -636,16 +687,34 @@ export const RoomPage = clientEntry(
 
           {mode === "opfs" && (
             <div class="flex flex-wrap items-center justify-between gap-3 rounded-box border border-base-300 bg-base-100 p-3">
-              <div class="text-sm">
-                <span class="font-medium">{`選択 ${sel.count} 件`}</span>
-                <span class="text-base-content/60">
-                  {` · 合計 ${humanSize(sel.bytes)}`}
-                </span>
-                {overLimit && (
-                  <span class="text-error">
-                    {` · 4GB を超えると一括ダウンロードできません`}
+              <div class="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  class="btn btn-xs btn-ghost"
+                  disabled={heldCount === 0}
+                  mix={[on("click", () => onSelectAll())]}
+                >
+                  全て選択
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-xs btn-ghost"
+                  disabled={heldCount === 0}
+                  mix={[on("click", () => onInvertSelection())]}
+                >
+                  反転
+                </button>
+                <span class="text-sm">
+                  <span class="font-medium">{`選択 ${sel.count} 件`}</span>
+                  <span class="text-base-content/60">
+                    {` · 合計 ${humanSize(sel.bytes)}`}
                   </span>
-                )}
+                  {overLimit && (
+                    <span class="text-error">
+                      {` · 4GB を超えると一括ダウンロードできません`}
+                    </span>
+                  )}
+                </span>
               </div>
               <button
                 type="button"
@@ -677,6 +746,11 @@ export const RoomPage = clientEntry(
                   const badge = fileBadge(f);
                   const isHeld = held.has(f.id);
                   const isSelected = selected.has(f.id);
+                  const isDownloading = dlState.get(f.id) === "downloading";
+                  const pct = progress.get(f.id) ?? 0;
+                  // Large files aren't auto-fetched — offer a manual button.
+                  const canFetch = !isHeld && !isDownloading &&
+                    f.uploader !== peerId && f.size > MAX_AUTO_BYTES;
                   return (
                     <div class="card card-compact bg-base-100 border border-base-300 overflow-hidden">
                       <figure class="relative aspect-square bg-base-200">
@@ -726,6 +800,23 @@ export const RoomPage = clientEntry(
                             </span>
                           )}
                         </div>
+                        {isDownloading && (
+                          <progress
+                            class="progress progress-info w-full"
+                            value={pct}
+                            max="100"
+                          >
+                          </progress>
+                        )}
+                        {canFetch && (
+                          <button
+                            type="button"
+                            class="btn btn-xs btn-outline"
+                            mix={[on("click", () => onFetch(f.id))]}
+                          >
+                            ⬇️ 取得 ({humanSize(f.size)})
+                          </button>
+                        )}
                         {mode === "opfs" && isHeld && (
                           <button
                             type="button"
