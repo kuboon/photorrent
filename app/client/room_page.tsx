@@ -163,11 +163,18 @@ export const RoomPage = clientEntry(
       for (const id of files.keys()) maybeDownload(id);
     };
 
-    // Mark which known files we already hold locally (from the active store).
+    // Mark which known files we already hold locally (from the active store)
+    // and re-announce `have` for each. The server tracks holders per live
+    // socket, so on every (re)connect — including WS drops on mobile — we must
+    // re-assert what we hold, or the server forgets we can serve these and
+    // re-distribution silently stops.
     const syncHeldFromStore = async () => {
       if (!store) return;
       for (const id of await store.listIds()) {
-        if (files.has(id)) held.add(id);
+        if (files.has(id)) {
+          held.add(id);
+          ws?.send({ t: "have", id });
+        }
       }
       handle.update();
       retryDownloads();
