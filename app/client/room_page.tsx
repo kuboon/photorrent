@@ -748,9 +748,14 @@ export const RoomPage = clientEntry(
                   const isSelected = selected.has(f.id);
                   const isDownloading = dlState.get(f.id) === "downloading";
                   const pct = progress.get(f.id) ?? 0;
-                  // Large files aren't auto-fetched — offer a manual button.
-                  const canFetch = !isHeld && !isDownloading &&
+                  // Large files aren't auto-fetched — offer a manual button, but
+                  // only when it can actually work: a store is ready and an
+                  // online holder exists (else the fetch would silently no-op).
+                  const isLargeWanted = !isHeld && !isDownloading &&
                     f.uploader !== peerId && f.size > MAX_AUTO_BYTES;
+                  const holderOnline = pickHolder(f.id) !== null;
+                  const canFetch = isLargeWanted && holderOnline &&
+                    store !== null;
                   return (
                     <div class="card card-compact bg-base-100 border border-base-300 overflow-hidden">
                       <figure class="relative aspect-square bg-base-200">
@@ -816,6 +821,11 @@ export const RoomPage = clientEntry(
                           >
                             ⬇️ 取得 ({humanSize(f.size)})
                           </button>
+                        )}
+                        {isLargeWanted && !holderOnline && (
+                          <span class="text-xs text-base-content/50">
+                            配信者がオフラインです
+                          </span>
                         )}
                         {mode === "opfs" && isHeld && (
                           <button
