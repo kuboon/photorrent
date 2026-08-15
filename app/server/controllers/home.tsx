@@ -9,7 +9,7 @@
 import type { BuildAction } from "@remix-run/fetch-router";
 import type { routes } from "../routes.ts";
 import { renderPage } from "../utils/render.tsx";
-import { CreateAlbum } from "../../client/home.tsx";
+import { CreateAlbum, StorageManager } from "../../client/home.tsx";
 
 export const homeAction = {
   handler(context) {
@@ -43,6 +43,8 @@ export const homeAction = {
             </ol>
           </div>
         </div>
+
+        <StorageManager />
       </main>,
     );
   },
