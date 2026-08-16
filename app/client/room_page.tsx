@@ -43,6 +43,7 @@ import {
 import { type ConnStatus, WsClient } from "./lib/ws_client.ts";
 import { type FileState, TransferManager } from "./lib/transfer.ts";
 import { makeZip } from "./lib/zip.ts";
+import { recordHeld } from "./lib/storage_index.ts";
 
 /** Sync mode: OPFS (browser storage) or a real folder (File System Access). */
 type SyncMode = "opfs" | "folder";
@@ -126,6 +127,13 @@ export const RoomPage = clientEntry(
     let ws: WsClient | null = null;
     let transfer: TransferManager | null = null;
 
+    // Mark a body as locally held, and (OPFS mode only) attribute it to this
+    // room so the home-page storage manager can list/clear it per room.
+    const noteHeld = (id: string) => {
+      held.add(id);
+      if (mode === "opfs") recordHeld(roomId, albumName, id);
+    };
+
     // Pick an online holder (other than me) for a file, or null.
     const pickHolder = (id: string): string | null => {
       const set = holders.get(id);
@@ -172,7 +180,7 @@ export const RoomPage = clientEntry(
       if (!store) return;
       for (const id of await store.listIds()) {
         if (files.has(id)) {
-          held.add(id);
+          noteHeld(id);
           ws?.send({ t: "have", id });
         }
       }
@@ -257,7 +265,7 @@ export const RoomPage = clientEntry(
           },
           (fileId, state) => {
             if (state === "have") {
-              held.add(fileId);
+              noteHeld(fileId);
               dlState.delete(fileId);
               progress.delete(fileId);
             } else {
@@ -290,7 +298,7 @@ export const RoomPage = clientEntry(
         // Persist our own body locally to serve to peers (OPFS, or written into
         // the picked folder in folder mode).
         await store?.save(id, file, file.name);
-        held.add(id);
+        noteHeld(id);
 
         const thumbUrl = `/api/room/${roomId}/thumb?id=${id}`;
         const res = await fetch(thumbUrl, {
@@ -423,7 +431,7 @@ export const RoomPage = clientEntry(
     // Publish a body we already hold (folder mode: existing folder files) to the
     // index — upload a thumbnail + `add` if new, else just announce `have`.
     const publishHeld = async (id: string, file: File): Promise<void> => {
-      held.add(id);
+      noteHeld(id);
       if (files.has(id)) {
         ws?.send({ t: "have", id });
         handle.update();

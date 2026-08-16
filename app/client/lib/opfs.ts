@@ -77,3 +77,21 @@ export async function listIds(): Promise<string[]> {
   }
   return ids;
 }
+
+/** Delete one stored body by id. No-op if absent/unavailable. */
+export async function remove(id: string): Promise<void> {
+  if (!isAvailable()) return;
+  try {
+    const dir = await filesDir();
+    await dir.removeEntry(id);
+  } catch { /* already gone */ }
+}
+
+/** Delete every stored body (the whole files directory). */
+export async function clearAll(): Promise<void> {
+  if (!isAvailable()) return;
+  try {
+    const root = await navigator.storage.getDirectory();
+    await root.removeEntry(DIR, { recursive: true });
+  } catch { /* nothing to clear */ }
+}
