@@ -551,11 +551,13 @@ export const RoomPage = clientEntry(
         : status === "connecting"
         ? "接続しています…"
         : "切断されました";
-      const statusBadge = status === "open"
-        ? "badge-success"
+      // A neutral pill with a coloured status dot: the colour-on-colour
+      // filled badges (e.g. badge-success) had too little text contrast.
+      const statusDot = status === "open"
+        ? "status-success"
         : status === "connecting"
-        ? "badge-warning"
-        : "badge-error";
+        ? "status-warning"
+        : "status-error";
 
       return (
         <main class="mx-auto w-full max-w-5xl p-4 sm:p-8 space-y-6">
@@ -584,7 +586,10 @@ export const RoomPage = clientEntry(
                   ]}
                 />
               </label>
-              <span class={`badge ${statusBadge} badge-sm`}>{statusLabel}</span>
+              <span class="badge badge-ghost badge-sm gap-1.5 whitespace-nowrap">
+                <span class={`status ${statusDot} status-sm`}></span>
+                {statusLabel}
+              </span>
               {mode === "opfs" && !opfsOk && (
                 <span class="badge badge-outline badge-warning badge-sm">
                   OPFS 非対応
