@@ -512,27 +512,46 @@ export const RoomPage = clientEntry(
     const uploaderLabel = (f: FileMeta): string =>
       f.uploader === peerId ? "自分" : (f.uploaderName?.trim() || "匿名");
 
-    // Per-file UI state (badge + dim). Returns null when there's no badge.
-    const fileBadge = (
+    // Per-file overlay chip shown on the thumbnail. A single dark translucent
+    // pill (readable over any photo) whose leading dot carries the colour, so
+    // we never depend on a daisyUI `*-content` pair for contrast. Returns null
+    // for untouched files — an unfetched large file gets the 取得 chip instead.
+    const fileTag = (
       f: FileMeta,
-    ): { label: string; cls: string; spin?: boolean } | null => {
-      if (f.uploader === peerId) return { label: "自分", cls: "badge-ghost" };
-      if (held.has(f.id)) return { label: "同期済み", cls: "badge-success" };
+    ): { label: string; dot?: string } | null => {
+      if (f.uploader === peerId) return { label: "自分" };
+      if (held.has(f.id)) return { label: "同期済み", dot: "bg-success" };
       const s = dlState.get(f.id);
       if (s === "downloading") {
         const pct = progress.get(f.id);
         return {
           label: pct != null ? `受信中 ${pct}%` : "受信中",
-          cls: "badge-info",
-          spin: true,
+          dot: "bg-info",
         };
       }
-      if (s === "error") return { label: "失敗", cls: "badge-error" };
-      // Large files aren't auto-fetched — the card shows a 取得 button instead.
-      if (f.size > MAX_AUTO_BYTES) {
-        return { label: "未取得（大）", cls: "badge-ghost badge-outline" };
+      if (s === "error") return { label: "失敗", dot: "bg-error" };
+      return null;
+    };
+
+    // Copy the room URL — the one thing every guest needs. Feedback is shown
+    // in the button label itself and cleared after a moment.
+    let copyMsg: string | null = null;
+    let copyTimer: ReturnType<typeof setTimeout> | undefined;
+    const onCopyUrl = async () => {
+      try {
+        await navigator.clipboard.writeText(location.href);
+        copyMsg = "コピーしました";
+      } catch {
+        // Clipboard needs a secure context / permission; say so rather than
+        // failing silently.
+        copyMsg = "コピーできません";
       }
-      return { label: "未取得", cls: "badge-ghost badge-outline" };
+      handle.update();
+      clearTimeout(copyTimer);
+      copyTimer = setTimeout(() => {
+        copyMsg = null;
+        handle.update();
+      }, 2000);
     };
 
     return () => {
@@ -560,19 +579,57 @@ export const RoomPage = clientEntry(
         : "status-error";
 
       return (
-        <main class="mx-auto w-full max-w-5xl p-4 sm:p-8 space-y-6">
-          <div class="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h1 class="text-2xl font-bold">
-                📸 {albumName || "アルバム"}
-              </h1>
-              <p class="text-sm text-base-content/60">
-                この URL を参加者に配ってください。
-              </p>
-            </div>
-            <div class="flex items-center gap-2">
-              <label class="input input-sm input-bordered flex items-center gap-1">
-                <span class="text-base-content/50">👤</span>
+        <div class="min-h-screen bg-base-200">
+          {/* ── top bar ─────────────────────────────────────────── */}
+          <header class="sticky top-0 z-30 border-b border-base-300 bg-base-100">
+            <div class="mx-auto flex max-w-[1600px] flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2.5 sm:px-7 sm:py-3">
+              <span class="grid h-9 w-9 shrink-0 place-items-center rounded-[10px] bg-primary text-primary-content">
+                <svg
+                  width="20"
+                  height="20"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3z" />
+                  <circle cx="12" cy="13" r="3.2" />
+                </svg>
+              </span>
+
+              <div class="min-w-0 flex-1">
+                <h1 class="truncate text-base font-bold sm:text-[17px]">
+                  {albumName || "アルバム"}
+                </h1>
+                <p class="flex flex-wrap items-center gap-1.5 text-xs text-base-content/60">
+                  <span class={`status ${statusDot}`}></span>
+                  {statusLabel}
+                  {mode === "opfs" && !opfsOk && (
+                    <span class="badge badge-outline badge-warning badge-xs">
+                      OPFS 非対応
+                    </span>
+                  )}
+                </p>
+              </div>
+
+              <label class="input input-sm input-bordered flex w-24 min-w-0 shrink items-center gap-1 sm:w-40">
+                <span class="text-base-content/50">
+                  <svg
+                    width="15"
+                    height="15"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <circle cx="12" cy="8" r="4" />
+                    <path d="M4 20c0-4 3.6-6 8-6s8 2 8 6" />
+                  </svg>
+                </span>
                 <input
                   type="text"
                   class="grow"
@@ -586,85 +643,110 @@ export const RoomPage = clientEntry(
                   ]}
                 />
               </label>
-              <span class="badge badge-ghost badge-sm gap-1.5 whitespace-nowrap">
-                <span class={`status ${statusDot} status-sm`}></span>
-                {statusLabel}
-              </span>
-              {mode === "opfs" && !opfsOk && (
-                <span class="badge badge-outline badge-warning badge-sm">
-                  OPFS 非対応
-                </span>
-              )}
+
+              {
+                /* Narrow screens stack these full-width (the labels don't fit
+                  side by side); one row from `sm` up. */
+              }
+              <div class="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:flex-nowrap">
+                <div class="tabs tabs-box tabs-sm w-full sm:w-auto">
+                  <button
+                    type="button"
+                    class={`tab flex-1 whitespace-nowrap sm:flex-none ${
+                      mode === "opfs" ? "tab-active" : ""
+                    }`}
+                    mix={[on("click", () => onSetMode("opfs"))]}
+                  >
+                    ブラウザ上で同期
+                  </button>
+                  <button
+                    type="button"
+                    class={`tab flex-1 whitespace-nowrap sm:flex-none ${
+                      mode === "folder" ? "tab-active" : ""
+                    }`}
+                    mix={[on("click", () => onSetMode("folder"))]}
+                  >
+                    フォルダを同期
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  class="btn btn-sm w-full gap-1.5 whitespace-nowrap border-primary/30 bg-primary/10 text-primary hover:bg-primary/20 sm:w-auto"
+                  mix={[on("click", () => void onCopyUrl())]}
+                >
+                  <svg
+                    width="15"
+                    height="15"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1.5 1.5" />
+                    <path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1.5-1.5" />
+                  </svg>
+                  {copyMsg ?? "URL を配る"}
+                </button>
+              </div>
             </div>
-          </div>
+          </header>
 
-          <div class="tabs tabs-boxed w-fit">
-            <button
-              type="button"
-              class={`tab ${mode === "opfs" ? "tab-active" : ""}`}
-              mix={[on("click", () => onSetMode("opfs"))]}
-            >
-              ブラウザ上で同期
-            </button>
-            <button
-              type="button"
-              class={`tab ${mode === "folder" ? "tab-active" : ""}`}
-              mix={[on("click", () => onSetMode("folder"))]}
-            >
-              フォルダを同期
-            </button>
-          </div>
-
-          {mode === "folder" && (
-            <div class="rounded-box border border-base-300 bg-base-100 p-3 space-y-2">
-              {!folderSupported
-                ? (
-                  <p class="text-sm text-base-content/70">
-                    このブラウザはフォルダ同期に非対応です（Chrome / Edge などの
-                    Chromium 系で利用できます）。他のブラウザでは
-                    「ブラウザ上で同期」をお使いください。
-                  </p>
-                )
-                : store === null
-                ? (
-                  <div class="flex flex-wrap items-center gap-3">
-                    <button
-                      type="button"
-                      class="btn btn-sm btn-primary"
-                      mix={[on("click", () => void onPickFolder())]}
-                    >
-                      📁 フォルダを選択
-                    </button>
-                    <span class="text-sm text-base-content/60">
-                      選んだフォルダ内のメディアを共有し、受信したファイルも
-                      そのフォルダに保存します。
-                    </span>
-                  </div>
-                )
-                : (
-                  <p class="text-sm">
-                    <span class="font-medium">📁 {folderName}</span>
-                    <span class="text-base-content/60">
-                      {" 同期中 — 受信したファイルはこのフォルダに保存されます"}
-                    </span>
-                  </p>
+          <main class="mx-auto max-w-[1600px] px-4 pb-32 pt-4 sm:px-7 sm:pt-6">
+            {mode === "folder" && (
+              <div class="mb-4 space-y-2 rounded-box border border-base-300 bg-base-100 p-3">
+                {!folderSupported
+                  ? (
+                    <p class="text-sm text-base-content/70">
+                      このブラウザはフォルダ同期に非対応です（Chrome / Edge
+                      などの Chromium 系で利用できます）。他のブラウザでは
+                      「ブラウザ上で同期」をお使いください。
+                    </p>
+                  )
+                  : store === null
+                  ? (
+                    <div class="flex flex-wrap items-center gap-3">
+                      <button
+                        type="button"
+                        class="btn btn-sm btn-primary"
+                        mix={[on("click", () => void onPickFolder())]}
+                      >
+                        📁 フォルダを選択
+                      </button>
+                      <span class="text-sm text-base-content/60">
+                        選んだフォルダ内のメディアを共有し、受信したファイルも
+                        そのフォルダに保存します。
+                      </span>
+                    </div>
+                  )
+                  : (
+                    <p class="text-sm">
+                      <span class="font-medium">📁 {folderName}</span>
+                      <span class="text-base-content/60">
+                        {" 同期中 — 受信したファイルはこのフォルダに保存されます"}
+                      </span>
+                    </p>
+                  )}
+                {folderMsg && (
+                  <p class="text-sm text-base-content/60">{folderMsg}</p>
                 )}
-              {folderMsg && (
-                <p class="text-sm text-base-content/60">{folderMsg}</p>
-              )}
-            </div>
-          )}
+              </div>
+            )}
 
-          {zipMsg && (
-            <div role="alert" class="alert alert-info alert-soft py-2">
-              <span class="text-sm">{zipMsg}</span>
-            </div>
-          )}
+            {zipMsg && (
+              <div role="alert" class="alert alert-info alert-soft mb-4 py-2">
+                <span class="text-sm">{zipMsg}</span>
+              </div>
+            )}
 
-          {canUpload && (
-            <label
-              for={FILE_INPUT_ID}
-              class="flex flex-col items-center justify-center gap-2 rounded-box border-2 border-dashed border-base-300 bg-base-200/40 p-8 text-center cursor-pointer hover:border-primary transition-colors"
+            {
+              /* Dropping anywhere on the gallery uploads — the dashed tile is
+                just the click target. */
+            }
+            <div
+              class="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 md:grid-cols-4 lg:grid-cols-6"
               mix={[
                 on<HTMLElement, "dragover">(
                   "dragover",
@@ -676,21 +758,181 @@ export const RoomPage = clientEntry(
                 }),
               ]}
             >
-              <span class="text-4xl">⬆️</span>
-              <span class="font-medium">
-                ファイルをドロップ、またはクリックして選択
-              </span>
-              <span class="text-sm text-base-content/50">
-                アップしたものは参加者全員に共有されます
-              </span>
-              {uploading > 0 && (
-                <span class="badge badge-primary badge-sm gap-1">
-                  <span class="loading loading-spinner loading-xs"></span>
-                  アップロード中 {uploading}
-                </span>
+              {canUpload && (
+                <label
+                  for={FILE_INPUT_ID}
+                  class="flex aspect-square cursor-pointer flex-col items-center justify-center gap-1.5 rounded-xl border-2 border-dashed border-primary/40 bg-primary/5 text-primary transition-colors hover:bg-primary/10"
+                >
+                  <svg
+                    width="26"
+                    height="26"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.8"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <path d="M12 15V4" />
+                    <path d="m7 9 5-5 5 5" />
+                    <path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3" />
+                  </svg>
+                  <span class="text-[13px] font-bold">ファイルを追加</span>
+                  <span class="text-[11px] opacity-70">ドロップでも OK</span>
+                  {uploading > 0 && (
+                    <span class="badge badge-primary badge-sm gap-1">
+                      <span class="loading loading-spinner loading-xs"></span>
+                      {uploading}
+                    </span>
+                  )}
+                </label>
               )}
-            </label>
-          )}
+
+              {list.map((f) => {
+                const tag = fileTag(f);
+                const isHeld = held.has(f.id);
+                const isSelected = selected.has(f.id);
+                const isDownloading = dlState.get(f.id) === "downloading";
+                const pct = progress.get(f.id) ?? 0;
+                // Large files aren't auto-fetched — offer a manual chip, but
+                // only when it can actually work: a store is ready and an
+                // online holder exists (else the fetch would silently no-op).
+                const isLargeWanted = !isHeld && !isDownloading &&
+                  f.uploader !== peerId && f.size > MAX_AUTO_BYTES;
+                const holderOnline = pickHolder(f.id) !== null;
+                const canFetch = isLargeWanted && holderOnline &&
+                  store !== null;
+                return (
+                  <div class="relative overflow-hidden rounded-xl border border-base-300 bg-base-100">
+                    <div class="relative aspect-square bg-base-200">
+                      <img
+                        src={f.thumbUrl}
+                        alt={f.filename}
+                        loading="lazy"
+                        class="h-full w-full object-cover"
+                      />
+
+                      {/* Status chips stack so they never overlap. */}
+                      <div class="absolute left-2 top-2 flex flex-col items-start gap-1">
+                        {tag && (
+                          <span class="inline-flex items-center gap-1.5 rounded-full bg-black/55 px-2 py-0.5 text-[11px] font-semibold text-white backdrop-blur-sm">
+                            {tag.dot && (
+                              <span
+                                class={`h-1.5 w-1.5 rounded-full ${tag.dot}`}
+                              >
+                              </span>
+                            )}
+                            {tag.label}
+                          </span>
+                        )}
+                        {canFetch && (
+                          <button
+                            type="button"
+                            class="inline-flex items-center gap-1 rounded-full bg-warning px-2 py-0.5 text-[11px] font-bold text-black/80"
+                            mix={[on("click", () => onFetch(f.id))]}
+                          >
+                            <svg
+                              width="11"
+                              height="11"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width="2.6"
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                            >
+                              <path d="M12 4v11" />
+                              <path d="m7 10 5 5 5-5" />
+                              <path d="M4 20h16" />
+                            </svg>
+                            {`取得 ${humanSize(f.size)}`}
+                          </button>
+                        )}
+                        {isLargeWanted && !holderOnline && (
+                          <span class="rounded-full bg-black/55 px-2 py-0.5 text-[11px] text-white backdrop-blur-sm">
+                            配信者オフライン
+                          </span>
+                        )}
+                      </div>
+
+                      {mode === "opfs" && isHeld && (
+                        <input
+                          type="checkbox"
+                          class="checkbox checkbox-sm absolute right-2 top-2 border-base-300 bg-base-100"
+                          checked={isSelected}
+                          aria-label="選択"
+                          mix={[
+                            on<HTMLInputElement, "change">(
+                              "change",
+                              () => onToggleSelect(f.id),
+                            ),
+                          ]}
+                        />
+                      )}
+
+                      <div
+                        class={`absolute inset-x-0 bottom-0 flex items-end gap-1.5 bg-gradient-to-t from-black/75 to-transparent px-2 pt-6 ${
+                          isDownloading ? "pb-3" : "pb-1.5"
+                        }`}
+                      >
+                        <div class="min-w-0 flex-1">
+                          <div
+                            class="truncate text-[11.5px] font-semibold text-white"
+                            title={f.filename}
+                          >
+                            {f.filename}
+                          </div>
+                          <div class="truncate text-[10.5px] text-white/70">
+                            {`${humanSize(f.size)} · ${uploaderLabel(f)}`}
+                          </div>
+                        </div>
+                        {mode === "opfs" && isHeld && (
+                          <button
+                            type="button"
+                            class="grid h-6 w-6 shrink-0 place-items-center rounded-md bg-white/20 text-white hover:bg-white/40"
+                            title="保存"
+                            aria-label="保存"
+                            mix={[on("click", () => void onDownloadOne(f))]}
+                          >
+                            <svg
+                              width="13"
+                              height="13"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width="2.2"
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                            >
+                              <path d="M12 4v11" />
+                              <path d="m7 10 5 5 5-5" />
+                              <path d="M4 20h16" />
+                            </svg>
+                          </button>
+                        )}
+                      </div>
+
+                      {isDownloading && (
+                        <progress
+                          class="progress progress-info absolute inset-x-0 bottom-0 h-1.5 w-full rounded-none"
+                          value={pct}
+                          max="100"
+                        >
+                        </progress>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {list.length === 0 && (
+              <p class="py-10 text-center text-sm text-base-content/50">
+                まだ写真がありません。最初の1枚をアップしてみましょう。
+              </p>
+            )}
+          </main>
+
           <input
             id={FILE_INPUT_ID}
             type="file"
@@ -705,164 +947,74 @@ export const RoomPage = clientEntry(
             ]}
           />
 
+          {/* ── floating action dock ───────────────────────────── */}
           {mode === "opfs" && (
-            <div class="flex flex-wrap items-center justify-between gap-3 rounded-box border border-base-300 bg-base-100 p-3">
-              <div class="flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  class="btn btn-xs btn-ghost"
-                  disabled={heldCount === 0}
-                  mix={[on("click", () => onSelectAll())]}
-                >
-                  全て選択
-                </button>
-                <button
-                  type="button"
-                  class="btn btn-xs btn-ghost"
-                  disabled={heldCount === 0}
-                  mix={[on("click", () => onInvertSelection())]}
-                >
-                  反転
-                </button>
-                <span class="text-sm">
-                  <span class="font-medium">{`選択 ${sel.count} 件`}</span>
-                  <span class="text-base-content/60">
-                    {` · 合計 ${humanSize(sel.bytes)}`}
+            <div class="fixed inset-x-0 bottom-0 z-40 border-t border-base-300 bg-base-100/90 p-3 backdrop-blur sm:inset-x-auto sm:bottom-6 sm:left-1/2 sm:-translate-x-1/2 sm:rounded-2xl sm:border sm:p-2.5 sm:shadow-xl">
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <div class="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    class="btn btn-ghost btn-xs sm:btn-sm"
+                    disabled={heldCount === 0}
+                    mix={[on("click", () => onSelectAll())]}
+                  >
+                    全て選択
+                  </button>
+                  <button
+                    type="button"
+                    class="btn btn-ghost btn-xs sm:btn-sm"
+                    disabled={heldCount === 0}
+                    mix={[on("click", () => onInvertSelection())]}
+                  >
+                    反転
+                  </button>
+                  <span class="mx-1 hidden h-6 w-px bg-base-300 sm:block">
                   </span>
-                  {overLimit && (
-                    <span class="text-error">
-                      {` · 4GB を超えると一括ダウンロードできません`}
+                  <span class="text-xs sm:text-sm">
+                    <span class="font-bold">{`選択 ${sel.count} 件`}</span>
+                    <span class="text-base-content/60">
+                      {` · ${humanSize(sel.bytes)}`}
                     </span>
+                  </span>
+                </div>
+
+                {overLimit && (
+                  <span class="w-full text-xs text-error sm:w-auto">
+                    4GB を超えると一括ダウンロードできません
+                  </span>
+                )}
+
+                <button
+                  type="button"
+                  class="btn btn-primary btn-sm w-full gap-1.5 whitespace-nowrap sm:w-auto"
+                  disabled={sel.count === 0 || overLimit || zipping}
+                  mix={[on("click", () => void onDownloadZip())]}
+                >
+                  {zipping && (
+                    <span class="loading loading-spinner loading-xs"></span>
                   )}
-                </span>
+                  {!zipping && (
+                    <svg
+                      width="15"
+                      height="15"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <path d="M12 4v11" />
+                      <path d="m7 10 5 5 5-5" />
+                      <path d="M4 20h16" />
+                    </svg>
+                  )}
+                  {zipping ? "作成中…" : "まとめてダウンロード"}
+                </button>
               </div>
-              <button
-                type="button"
-                class="btn btn-sm btn-primary"
-                disabled={sel.count === 0 || overLimit || zipping}
-                mix={[on("click", () => void onDownloadZip())]}
-              >
-                {zipping
-                  ? (
-                    <>
-                      <span class="loading loading-spinner loading-xs"></span>
-                      作成中…
-                    </>
-                  )
-                  : `⬇️ まとめてダウンロード (${sel.count})`}
-              </button>
             </div>
           )}
-
-          {list.length === 0
-            ? (
-              <div class="text-center text-base-content/50 py-12">
-                まだ写真がありません。最初の1枚をアップしてみましょう。
-              </div>
-            )
-            : (
-              <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-                {list.map((f) => {
-                  const badge = fileBadge(f);
-                  const isHeld = held.has(f.id);
-                  const isSelected = selected.has(f.id);
-                  const isDownloading = dlState.get(f.id) === "downloading";
-                  const pct = progress.get(f.id) ?? 0;
-                  // Large files aren't auto-fetched — offer a manual button, but
-                  // only when it can actually work: a store is ready and an
-                  // online holder exists (else the fetch would silently no-op).
-                  const isLargeWanted = !isHeld && !isDownloading &&
-                    f.uploader !== peerId && f.size > MAX_AUTO_BYTES;
-                  const holderOnline = pickHolder(f.id) !== null;
-                  const canFetch = isLargeWanted && holderOnline &&
-                    store !== null;
-                  return (
-                    <div class="card card-compact bg-base-100 border border-base-300 overflow-hidden">
-                      <figure class="relative aspect-square bg-base-200">
-                        <img
-                          src={f.thumbUrl}
-                          alt={f.filename}
-                          loading="lazy"
-                          class="h-full w-full object-cover"
-                        />
-                        {mode === "opfs" && isHeld && (
-                          <input
-                            type="checkbox"
-                            class="checkbox checkbox-sm absolute top-2 left-2 bg-base-100"
-                            checked={isSelected}
-                            aria-label="選択"
-                            mix={[
-                              on<HTMLInputElement, "change">(
-                                "change",
-                                () => onToggleSelect(f.id),
-                              ),
-                            ]}
-                          />
-                        )}
-                      </figure>
-                      <div class="card-body gap-1">
-                        <div
-                          class="text-xs font-medium truncate"
-                          title={f.filename}
-                        >
-                          {f.filename}
-                        </div>
-                        <div
-                          class="text-xs text-base-content/50 truncate"
-                          title={uploaderLabel(f)}
-                        >
-                          👤 {uploaderLabel(f)}
-                        </div>
-                        <div class="flex items-center justify-between text-xs text-base-content/60">
-                          <span>{humanSize(f.size)}</span>
-                          {badge && (
-                            <span class={`badge ${badge.cls} badge-xs gap-1`}>
-                              {badge.spin && (
-                                <span class="loading loading-spinner loading-xs">
-                                </span>
-                              )}
-                              {badge.label}
-                            </span>
-                          )}
-                        </div>
-                        {isDownloading && (
-                          <progress
-                            class="progress progress-info w-full"
-                            value={pct}
-                            max="100"
-                          >
-                          </progress>
-                        )}
-                        {canFetch && (
-                          <button
-                            type="button"
-                            class="btn btn-xs btn-outline"
-                            mix={[on("click", () => onFetch(f.id))]}
-                          >
-                            ⬇️ 取得 ({humanSize(f.size)})
-                          </button>
-                        )}
-                        {isLargeWanted && !holderOnline && (
-                          <span class="text-xs text-base-content/50">
-                            配信者がオフラインです
-                          </span>
-                        )}
-                        {mode === "opfs" && isHeld && (
-                          <button
-                            type="button"
-                            class="btn btn-xs btn-outline"
-                            mix={[on("click", () => void onDownloadOne(f))]}
-                          >
-                            ⬇️ 保存
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-        </main>
+        </div>
       );
     };
   },
